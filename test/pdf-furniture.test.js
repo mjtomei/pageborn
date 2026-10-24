@@ -1,0 +1,107 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { repeatedPdfTextMasks, removeRepeatedPdfDividers } from '../src/pdf-furniture.js';
+import { insidePdfMargin } from '../src/pdf-margins.js';
+import { analyzePdfPage } from '../src/pdf-layout.js';
+
+const line = (text, y, x = 60, width = 470, height = 12) => ({ text, x, y, width, height });
+const pages = () => Array.from({ length: 8 }, (_, i) => ({ width: 600, height: 800, text: [
+  line(i % 2 ? `Journal Review ${100 + i}` : `${100 + i} Running Title`, 42),
+  line('A repeated phrase in the body is still content.', 200),
+  line(`Unique body paragraph ${i}.`, 230),
+  line(`Unique footnote explanation ${i}.`, 687),
+  line('Downloaded from the archive on 2026-09-29', 741),
+  line('Archive terms apply.', 758),
+] }));
+
+test('recurring edge ornaments disappear without discarding figures, equations, body separators or unique marks', () => {
+  const bar = { kind: 'scan', x: 0, y: 110, width: 550, height: 8, lines: [] };
+  const content = { kind: 'text', x: 50, y: 200, width: 500, height: 200, lines: [line('Body text', 200)], reflow: { text: 'Body text' } };
+  const kept = [{ ...bar, y: 300 }, { ...bar, y: 50, kind: 'figure' }, { ...bar, y: 760, lines: [line('x = y', 760)] }];
+  const input = Array.from({ length: 5 }, () => ({ width: 600, height: 800, blocks: [{ ...bar }, content, ...kept] }));
+  input[0].blocks.push({ ...bar, y: 135 });
+  const output = removeRepeatedPdfDividers(input);
+  assert.equal(output[0].blocks.length, 5); assert.equal(output[1].blocks.length, 4);
+  assert.deepEqual(output[1].blocks, [content, ...kept]); assert.equal(input[1].blocks.length, 5);
+  assert.equal(removeRepeatedPdfDividers(input.slice(0, 2))[0].blocks.length, 6);
+});
+
+test('recurring edge text and alternating running heads are hidden, while body and footnotes survive', () => {
+  const input = pages(); const masks = repeatedPdfTextMasks(input);
+  for (const [i, page] of input.entries()) {
+    for (const n of [0, 4, 5]) assert.equal(insidePdfMargin(page.text[n], masks[i]), true);
+    for (const n of [1, 2, 3]) assert.equal(insidePdfMargin(page.text[n], masks[i]), false);
+  }
+});
+
+test('OCR spacing and changing page numbers do not prevent a header match', () => {
+  const input = pages(); input[1].text[0].text = 'Journal Re view 101';
+  assert.equal(insidePdfMargin(input[1].text[0], repeatedPdfTextMasks(input)[1]), true);
+});
+
+test('vertical manuscript watermarks clear their lane while preserving nearby text and chart axes', () => {
+  const mark = line('Author Manuscript', 150, 25, 12, 150);
+  const axis = line('Elapsed time', 350, 565, 12, 160);
+  const title = line('A cover title reaching into the margin', 80, 30, 480, 20);
+  const input = pages().map((page, i) => ({ ...page, text: [...page.text, mark, axis, ...(i === 0 ? [title] : [])] }));
+  const masks = repeatedPdfTextMasks(input);
+  assert.ok(insidePdfMargin(mark, masks[0]));
+  assert.ok(insidePdfMargin({ x: 37, y: 550, width: 1, height: 100 }, masks[0]), 'the associated line between watermarks is cleared');
+  assert.equal(insidePdfMargin(axis, masks[0]), false);
+  assert.equal(insidePdfMargin({ x: 30, y: 82, width: 10, height: 15 }, masks[0]), false, 'other text protects its band');
+});
+
+test('a unique title, unique footer and a body phrase matching the running head are retained', () => {
+  const input = pages();
+  input[0].text[0].text = 'An article title'; input[0].text[4].text = 'A unique publication statement';
+  input[2].text.push(line('Journal Review 102', 400));
+  const masks = repeatedPdfTextMasks(input);
+  assert.equal(insidePdfMargin(input[0].text[0], masks[0]), false);
+  assert.equal(insidePdfMargin(input[0].text[4], masks[0]), false);
+  assert.equal(insidePdfMargin(input[2].text.at(-1), masks[2]), false);
+  assert.deepEqual(repeatedPdfTextMasks(input.slice(0, 2)), [[], []]);
+});
+
+test('normalized page positions support PDFs with different page sizes', () => {
+  const input = pages(); input[0] = { width: 900, height: 1200,
+    text: input[0].text.map(t => ({ ...t, x: t.x * 1.5, y: t.y * 1.5, width: t.width * 1.5, height: t.height * 1.5 })) };
+  const masks = repeatedPdfTextMasks(input);
+  assert.equal(insidePdfMargin(input[0].text[0], masks[0]), true);
+  assert.equal(insidePdfMargin(input[0].text[4], masks[0]), true);
+});
+
+test('whole-row masks remove scan glyphs outside their OCR boxes without clipping neighboring text', () => {
+  const input = pages(); input[0].text.push(line('A nearby body line.', 62));
+  const masks = repeatedPdfTextMasks(input);
+  const headerMask = masks[0][0];
+  assert.equal(headerMask.x, 0); assert.equal(headerMask.width, 600);
+  assert.ok(headerMask.y + headerMask.height <= 62);
+  const data = new Uint8ClampedArray(600 * 800 * 4).fill(255);
+  for (const [x, y, w, h] of [[20, 40, 8, 15], [60, 63, 250, 10]]) {
+    for (let row = y; row < y + h; row++) for (let col = x; col < x + w; col++) data.fill(0, (row * 600 + col) * 4, (row * 600 + col) * 4 + 3);
+  }
+  const result = analyzePdfPage({ width: 600, height: 800, data, text: input[0].text, pageMasks: masks[0] });
+  assert.ok(result.blocks.length > 0);
+  assert.ok(result.blocks.every(b => b.y >= 60));
+  assert.ok(result.blocks.some(b => b.text.includes('A nearby body line.')));
+});
+
+test('an isolated first-page folio is removed even without repetition; body numbers and note markers stay', async () => {
+  const { pdfPageNumberMasks } = await import('../src/pdf-furniture.js');
+  const page = { width: 600, height: 800, text: [line('A long body passage with a meaningful original number 633.', 200), line('633', 690, 280, 30, 12)] };
+  const masks = pdfPageNumberMasks(page);
+  assert.equal(insidePdfMargin(page.text[1], masks), true);
+  assert.equal(insidePdfMargin(page.text[0], masks), false);
+  const withNote = { ...page, text: [page.text[0], line('1', 740, 60, 8, 8), line('Footnote content on the same baseline.', 742, 72, 400, 11)] };
+  assert.equal(pdfPageNumberMasks(withNote).length, 0);
+  assert.equal(pdfPageNumberMasks({ ...page, text: [page.text[0], line('IV', 320, 280, 20, 16)] }).length, 0, 'Roman section heading remains');
+});
+
+test('word-by-word scan text still establishes a body for an isolated nearby bottom folio', async () => {
+  const { pdfPageNumberMasks } = await import('../src/pdf-furniture.js');
+  const body = ['The', 'last', 'sentence', 'continues', 'here.'].map((text, i) => line(text, 725, 60 + i * 80, 70, 12));
+  const folio = line('121', 745, 280, 30, 16);
+  const page = { width: 600, height: 800, text: [...body, folio] };
+  assert.equal(insidePdfMargin(folio, pdfPageNumberMasks(page)), true);
+  assert.equal(pdfPageNumberMasks({ ...page, text: [...body, folio, line('a note on the same line', 749, 320, 220)] }).length, 0);
+});

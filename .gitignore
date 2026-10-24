@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-release/
+dist-web/
+.state/
+*.ehpk
+test-results/
+playwright-report/
+.tools/
+.env
+.env.*
+!.env.example
+/library/*
+!/library/Welcome.md
+
+release-exports/

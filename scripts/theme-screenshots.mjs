@@ -1,0 +1,71 @@
+// Captures the Pageborne phone UI in light and dark themes.
+// Usage: npm run build:debug && SAMPLES=../sample-documents node scripts/theme-screenshots.mjs [outDir] [--widths=320,390,430,1280]
+import { chromium, expect } from '@playwright/test';
+import path from 'node:path';
+import os from 'node:os';
+import { access, readdir, mkdir, readFile } from 'node:fs/promises';
+import { createApp } from '../server/app.js';
+import { chooseMode } from './ui-helpers.mjs';
+
+const args = process.argv.slice(2);
+const outDir = path.resolve(args.find(a => !a.startsWith('--')) || 'test-results/themes');
+const samples = path.resolve(process.env.SAMPLES || '../sample-documents');
+const widths = (args.find(a => a.startsWith('--widths='))?.slice(9) || '390').split(',').map(Number);
+await mkdir(outDir, { recursive: true });
+const server = createApp({ distDir: path.resolve('dist') }).listen(0, '127.0.0.1');
+await new Promise(resolve => server.once('listening', resolve));
+const cache = path.join(os.homedir(), '.cache/ms-playwright');
+const cached = (await readdir(cache).catch(() => [])).filter(name => /^chromium-\d+$/.test(name));
+const paths = [process.env.CHROME_PATH, chromium.executablePath(), ...cached.flatMap(name =>
+  [path.join(cache, name, 'chrome-linux/chrome'), path.join(cache, name, 'chrome-linux64/chrome')])].filter(Boolean);
+const executablePath = (await Promise.all(paths.map(async value => { try { await access(value); return value; } catch { return null; } }))).find(Boolean);
+const browser = await chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] });
+const files = ['a-walk-by-the-river.md', 'a-very-long-document-name-for-checking-library-layout-and-wrapping.md', 'speed-reading.md', 'table-examples.md', 'footnotes-and-captions.pdf', 'equations.pdf'];
+const mime = name => name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.txt') ? 'text/plain' : 'text/markdown';
+const report = [];
+for (const scheme of ['dark', 'light']) for (const width of widths) {
+  const desktop = width >= 1000; const height = desktop ? 900 : width <= 320 ? 640 : 844;
+  const context = await browser.newContext({ viewport: { width, height }, colorScheme: scheme, isMobile: !desktop, hasTouch: !desktop, deviceScaleFactor: 2 });
+  const page = await context.newPage(); const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}`); await expect(page.locator('#import')).toBeEnabled();
+  const shot = async name => { await page.waitForTimeout(300); await page.screenshot({ path: path.join(outDir, `${scheme}-${width}-${name}.png`) }); };
+  const library = async () => { if (await page.locator('#library-toggle').getAttribute('aria-expanded') !== 'true') await page.locator('#library-toggle').click(); await page.waitForTimeout(280); };
+  const open = async id => { await library(); await page.locator(`[data-document-id="${id}"] .document-card`).click(); await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 60000 }); await page.waitForTimeout(300); };
+  const dock = async expanded => { const t = page.locator('#dock-toggle'); if (await t.isVisible() && (await t.getAttribute('aria-expanded') === 'true') !== expanded) await t.click(); };
+  await shot('00-empty');
+  await page.locator('#file-picker').setInputFiles(await Promise.all(files.map(async name => ({ name, mimeType: mime(name), buffer: await readFile(path.join(samples, name)) }))));
+  await page.locator('#file-picker').setInputFiles([{ name: 'broken-export.txt', mimeType: 'text/plain', buffer: Buffer.from([0xff, 0xfe, 0, 0, 0xd8, 0, 0, 0xdc]) }]);
+  await expect(page.locator('#doc-count')).toHaveText(String(files.length), { timeout: 60000 }); await page.waitForTimeout(600);
+  await shot('01-library-imports-folded');
+  await page.locator('#imports-details').click(); await shot('01b-library-imports-details'); await page.locator('#imports-details').click();
+  await page.getByRole('button', { name: 'Delete equations.pdf', exact: true }).click(); await shot('02-delete-confirm');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await open('a-walk-by-the-river.md'); await dock(false); await page.locator('#mode-page').evaluate(el => el.click());
+  await shot('03-pages-folded-dock');
+  await page.locator('#bookmark-quick').click(); await page.locator('#next').click(); await page.locator('#next').click(); await shot('03b-quick-bookmark-landmarks');
+  await page.locator('#passage').evaluate(el => { el.dispatchEvent(new Event('wheel')); el.scrollTop = el.scrollHeight * .4; });
+  await page.locator('#passage').scrollIntoViewIfNeeded(); await shot('04-browsing-away');
+  await page.locator('#passage-current').click(); await page.locator('.reader-content').evaluate(el => { el.scrollTop = 0; });
+  await dock(true); await shot('05-pages-open-dock');
+  await chooseMode(page,'auto'); await page.locator('#play').click(); await page.waitForTimeout(800);
+  await dock(false); await shot('06-autoscroll-playing'); await page.locator('#play').click();
+  await open('speed-reading.md'); await dock(true); await chooseMode(page,'speed'); await shot('07-speed-read');
+  await page.locator('#speed-value').click(); await shot('08-numeric-entry'); await page.locator('#value-cancel').click();
+  await library(); await page.locator('#settings-toggle').click(); await page.locator('#theme-control').scrollIntoViewIfNeeded(); await shot('09-settings'); await page.locator('#settings-done').click(); await page.locator('#library-close').isVisible() && await page.locator('#library-close').click(); await page.waitForTimeout(280);
+  await page.locator('#tab-bookmarks').click(); await shot('10-marks');
+  await page.locator('#tab-search').click(); await page.locator('#search').fill('book'); await page.waitForTimeout(300); await page.locator('#search').press('Enter'); await page.locator('#search-next').click(); await shot('11a-search-stepping');
+  await page.locator('#search').fill('xyzzy'); await page.waitForTimeout(300); await shot('11-search-empty');
+  await page.locator('#tool-close').click(); await dock(false); await page.locator('#mode-page').evaluate(el => el.click());
+  await open('table-examples.md'); await page.locator('#passage').scrollIntoViewIfNeeded(); await shot('12-table-records');
+  await open('footnotes-and-captions.pdf'); await page.locator('#tab-pdf').click(); await shot('13-pdf-settings');
+  await page.locator('.reader-content').evaluate(el => { el.scrollTop = el.scrollHeight; }); await shot('14-pdf-defaults');
+  await page.locator('.reader-content').evaluate(el => { el.scrollTop = 0; });
+  await page.locator('#pdf-footnotes').click(); await page.waitForTimeout(500); await page.locator('.reader-content').evaluate(el => { el.scrollTop = 0; }); await shot('15-footnotes');
+  await page.locator('#play').click(); await page.locator('#tool-close').click();
+  await open('equations.pdf'); await page.locator('#pdf-passage').scrollIntoViewIfNeeded(); await shot('16-pdf-passage');
+  await library(); await shot('17-library-while-reading');
+  report.push({ scheme, width, overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), errors });
+  await context.close();
+}
+console.log(JSON.stringify(report));
+await browser.close(); server.close();

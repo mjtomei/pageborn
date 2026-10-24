@@ -1,0 +1,20 @@
+Pageborne voice benchmark recordings
+
+Nine excerpts from LibriSpeech (test-clean), derived from LibriVox readings.
+Dataset authors: Vassil Panayotov, Guoguo Chen, Daniel Povey, Sanjeev Khudanpur.
+LibriSpeech: an ASR corpus based on public domain audio books (2015).
+https://www.openslr.org/12/
+
+LibriSpeech is licensed under Creative Commons Attribution 4.0 International:
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Clip IDs, transcripts and source locations are in benchmark-samples.json.
+The first three clips were obtained from the hf-internal-testing copy of
+LibriSpeech; the other six from the openslr/librispeech_asr dataset on Hugging
+Face. Reader/speaker IDs: 1272, 1320, 2961, 8455.
+
+Changes: converted FLAC to 16 kHz, mono, 16-bit PCM WAV, without editing the
+spoken content. The app can add deterministic synthetic 10 dB noise at runtime
+for paired clean/noisy measurements. References are normalized for scoring.
+No endorsement by the dataset authors or readers is implied.

@@ -1,0 +1,27 @@
+name: Source and builds
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run release:audit
+      - run: npm test
+      - run: npm run pack:release
+      - run: npm run build:web
+      - run: npm run build:debug
+      - run: npm run release:audit -- --built
+      - run: npx playwright install chromium
+      - name: Public/private profile isolation
+        run: |
+          export CHROME_PATH="$(node --input-type=module -e 'import { chromium } from "@playwright/test"; process.stdout.write(chromium.executablePath())')"
+          npm run test:build-profiles

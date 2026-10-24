@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="An open book with a folded page">
+  <rect width="1024" height="1024" fill="#000"/>
+  <g fill="#fff">
+    <path d="M192 280Q192 256 218 256C318 258 416 282 486 330V778C409 729 316 710 218 710Q192 710 192 684Z"/>
+    <path fill-rule="evenodd" d="M538 330C578 298 621 276 675 258Q692 252 706 268L823 385Q832 394 832 410V684Q832 710 806 710C708 710 615 729 538 778ZM698 306V384Q698 410 724 410H802Z"/>
+  </g>
+</svg>

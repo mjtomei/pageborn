@@ -1,0 +1,32 @@
+import express from 'express';
+import { chromium, webkit } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+const probe = path.resolve(process.env.PAGEBORNE_PROBE_DIR || '.state/ensemble-package-probe');
+const useWebKit=process.argv.includes('--webkit');
+const label=useWebKit?'webkit':'chromium';
+const app=express();app.use(express.static(path.join(probe, 'source/dist')));
+const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.on('listening',r));
+const browser=await (useWebKit?webkit:chromium).launch({headless:true,executablePath:useWebKit?process.env.WEBKIT_PATH:'/usr/bin/google-chrome'});const page=await browser.newPage({viewport:{width:440,height:806}});
+const errors=[],requested=[];page.on('pageerror',e=>errors.push(e.message));
+const origin=`http://127.0.0.1:${server.address().port}`;
+await page.route('**/*',route=>{const url=new URL(route.request().url());if(url.origin!==origin)return route.abort();requested.push(url.pathname);return route.continue();});
+try{
+ await page.goto(origin);await page.locator('#app-version').filter({hasText:'0.8.65'}).waitFor({state:'attached'});
+ await page.locator('#settings-toggle').click();await page.locator('#ensemble-verify').click();
+ await page.waitForFunction(()=>document.querySelector('#ensemble-verification-status').textContent.startsWith('All three'),{},{timeout:120000});
+ const report=await page.evaluate(()=>window.__ensemblePackageVerification);
+ assert.equal(report.verified,true);assert.equal(report.bytes,249390292);assert.equal(report.models.length,3);assert.equal(report.files.length,16);
+ assert.equal(requested.some(p=>p.includes('speech-worker')||p.endsWith('.wasm')),false);
+ await page.route('**/ensemble-models/**/tokens.txt',r=>r.fulfill({body:'corrupted',contentType:'text/plain'}));
+ await page.locator('#ensemble-verify').click();await page.waitForFunction(()=>document.querySelector('#ensemble-verification-status').textContent.startsWith('Verification failed'),{},{timeout:60000});
+ await page.unroute('**/ensemble-models/**/tokens.txt');
+ await page.locator('#ensemble-verify').click();await page.locator('#ensemble-verify').click();
+ assert.equal(await page.locator('#ensemble-verification-status').innerText(),'Verification cancelled.');
+ await page.locator('#ensemble-verify').click();await page.waitForFunction(()=>document.querySelector('#ensemble-verification-status').textContent.startsWith('All three'),{},{timeout:120000});
+ assert.deepEqual(errors,[]);
+ await writeFile(`${probe}/browser-check-${label}.json`,JSON.stringify({...report,corruptionRejected:true,cancelRetry:true,noModelInitialization:true,pageErrors:errors,scope:`Local desktop ${label} checksum/load test; no phone installation or trio inference.`},null,2));
+ await page.screenshot({path:`${probe}/verification-${label}.png`,fullPage:true});
+ console.log(JSON.stringify({verifiedFiles:report.files.length,bytes:report.bytes,corruptionRejected:true,cancelRetry:true,pageErrors:errors}));
+}finally{await browser.close();server.close();}

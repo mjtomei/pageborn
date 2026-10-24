@@ -1,0 +1,62 @@
+// Optional, authenticated text-history extension. No prompts are submitted.
+export const conversationCapabilities = provider => typeof provider.getConversation === 'function' ? { conversationSync: 1 } : {};
+
+export function displayQuestion(text) {
+  text = String(text || '').trim();
+  const match = /^(?:[^\n]{1,300}\n\n)?(Pageborne question [\da-f]{8}-[\da-f-]{27,})\n/i.exec(text);
+  if (!match) return { question: text };
+  const body = text.slice(match[0].length);
+  let question;
+  if (body.startsWith("You are the user's librarian,") && body.includes('\n\n')) question = body.slice(body.indexOf('\n\n') + 2);
+  else if (body.startsWith('You are a reading companion on text-only glasses.') || body.startsWith('You are a reading companion in a phone and tablet web reader.')) {
+    // JSON is serialized on one line, so embedded source/question delimiters
+    // cannot be mistaken for the boundary of the original question.
+    const file = /\n\nCurrent reading position \(source material\):\n[^\n]*\n\nQuestion:\n/.exec(body);
+    const excerpt = /\n\nReading context \(source material\):\n[^\n]*\n\n/.exec(body);
+    const boundary = file || excerpt;
+    if (boundary) question = body.slice(boundary.index + boundary[0].length);
+  }
+  return question == null ? { question: text } : { question, marker: match[1] };
+}
+
+export function conversationTurns(snapshot) {
+  const result = [];
+  for (const turn of snapshot) {
+    let current;
+    for (const item of turn.items || []) {
+      if (!['userMessage', 'agentMessage'].includes(item.type)) continue;
+      const text = item.type === 'userMessage' ? (item.content || []).filter(c => c.type === 'text').map(c => c.text || '').join('\n') : item.text;
+      if (!text?.trim()) continue;
+      if (item.type === 'userMessage' || !current) {
+        current = { id: `${turn.id}:${item.id}`, aliases: (item.aliases || []).map(id => `${turn.id}:${id}`),
+          ...(item.type === 'userMessage' ? displayQuestion(text) : { question: '' }), answer: '', state: 'complete' };
+        result.push(current);
+      }
+      if (item.type === 'agentMessage') current.answer += (current.answer ? '\n\n' : '') + text.trim();
+    }
+    if (current) current.state = turn.status === 'inProgress' ? 'pending' : /failed|interrupted/.test(turn.status) ? 'error' : 'complete';
+  }
+  // Match the reader's retained conversation budget, after removing passage
+  // wrappers. Older desktop history remains in the agent's own session.
+  const kept = []; let characters = 0;
+  for (const value of result.slice(-40).reverse()) {
+    const entry = { ...value, question: value.question.slice(0, 64000), answer: value.answer.slice(0, 16000) };
+    characters += entry.question.length + entry.answer.length;
+    if (characters > 100000) break;
+    kept.unshift(entry);
+  }
+  return kept;
+}
+
+export function installConversationSync(router, getProvider) {
+  router.get('/pageborne/conversation', async (req, res) => {
+    const id = req.query.sessionId;
+    if (typeof id !== 'string' || !id || id.length > 200) return res.status(400).json({ error: 'Missing or invalid session ID.' });
+    try {
+      const provider = getProvider(req.query.provider, id);
+      if (!conversationCapabilities(provider).conversationSync) return res.status(404).json({ error: 'Conversation sync unavailable.' });
+      const turns = conversationTurns(await provider.getConversation(id));
+      res.json({ version: 1, sessionId: id, turns, state: provider.getStatus(id)?.state || 'idle' });
+    } catch (error) { res.status(error.statusCode || 502).json({ error: 'Could not load the shared conversation.' }); }
+  });
+}

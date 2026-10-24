@@ -1,0 +1,14 @@
+Name
+Pageborne
+
+Subheading
+Markdown and PDFs, on your glasses.
+
+Release note for 0.7.18
+PDF autoscroll now brings text in from the bottom after an image, starting with three lines and adding one per scroll interval. Adjust After images from 1–9 initial lines; 9 keeps the full-screen behavior. Short passages also retain their first line while moving up. Pause/resume works during entry, including the last text in a document. Display timing waits for each accepted update. Existing PDF preparations are reused.
+
+Existing project/package ID
+local.even.reader
+
+Upload this build to the existing project so it updates the same installed app.
+Use the display name Pageborne in the store listing to match the package.

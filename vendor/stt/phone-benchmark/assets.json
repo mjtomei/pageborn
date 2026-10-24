@@ -1,0 +1,47 @@
+[
+  {
+    "file": "1272-128104-0000.wav",
+    "bytes": 187404,
+    "sha256": "6051d0d44c2291bbeac1e33042437eecec634eecc6868c7043b9fcc84832d4ef"
+  },
+  {
+    "file": "1272-128104-0001.wav",
+    "bytes": 154124,
+    "sha256": "70b4f3754946d8497d70efa2cd89d7a84ba6b44d45ace5a93c6c7e6f01ad51cd"
+  },
+  {
+    "file": "1272-128104-0002.wav",
+    "bytes": 399564,
+    "sha256": "e5297dc7ee3feaf7eebd8cdcf20c3cd82d9b9febf708f67c7b9581693f3d1d10"
+  },
+  {
+    "file": "1320-122617-0022.wav",
+    "bytes": 123404,
+    "sha256": "c1d87da3b3624052673a076b7701e83059dce464bd0109b1688a6ae0b1f0c218"
+  },
+  {
+    "file": "1320-122617-0023.wav",
+    "bytes": 250124,
+    "sha256": "bfbbfc25c021c89938b11e431cc2968ae65298d6955b8956c984a230dad28d76"
+  },
+  {
+    "file": "2961-960-0003.wav",
+    "bytes": 554124,
+    "sha256": "08ad4ff79adf49c606f354b4913b7cd5b4b1ae8ead39fa8755d315c1f5e4df29"
+  },
+  {
+    "file": "2961-960-0004.wav",
+    "bytes": 263084,
+    "sha256": "36244a2898fbcedcd48bf7abf52c3e476198c70d66bc8f617d89c2c5282e42f6"
+  },
+  {
+    "file": "8455-210777-0028.wav",
+    "bytes": 247564,
+    "sha256": "b951deba5b78d449f02fd9cfad1d3e795fb9e771d426c6750fa171b914e76d5c"
+  },
+  {
+    "file": "8455-210777-0029.wav",
+    "bytes": 98764,
+    "sha256": "455a835256a1a5bf32f3aea3dc73e62e4ce58e4c9fdc0faf83c6049a0b1a2d7c"
+  }
+]

@@ -1,0 +1,141 @@
+import { speedToSlider } from '../src/reader.js';
+// Captures the 0.7 "Remote" phone UI states used in the design handoff.
+// Usage: npm run build:debug && node scripts/design-screenshots.mjs [outDir] [--widths=360,390,430]
+import { chromium, expect } from '@playwright/test';
+import path from 'node:path';
+import os from 'node:os';
+import { access, readdir, mkdir, readFile } from 'node:fs/promises';
+import { createApp } from '../server/app.js';
+import { scannedPdfFixture } from '../test/fixtures/pdfs.mjs';
+import { showDockOptions, chooseMode } from './ui-helpers.mjs';
+
+const args = process.argv.slice(2);
+const outDir = path.resolve(args.find(a => !a.startsWith('--')) || 'test-results/design');
+const samples = path.resolve(process.env.SAMPLES || '../sample-documents');
+const widths = (args.find(a => a.startsWith('--widths='))?.slice(9) || '390').split(',').map(Number);
+await mkdir(outDir, { recursive: true });
+const server = createApp({ distDir: path.resolve('dist') }).listen(0, '127.0.0.1');
+await new Promise(resolve => server.once('listening', resolve));
+const base = `http://127.0.0.1:${server.address().port}`;
+const cache = path.join(os.homedir(), '.cache/ms-playwright');
+const cached = (await readdir(cache).catch(() => [])).filter(name => /^chromium-\d+$/.test(name));
+const paths = [process.env.CHROME_PATH, chromium.executablePath(), ...cached.flatMap(name =>
+  [path.join(cache, name, 'chrome-linux/chrome'), path.join(cache, name, 'chrome-linux64/chrome')])].filter(Boolean);
+const executablePath = (await Promise.all(paths.map(async value => { try { await access(value); return value; } catch { return null; } }))).find(Boolean);
+const browser = await chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] });
+const files = ['a-walk-by-the-river.md', 'a-very-long-document-name-for-checking-library-layout-and-wrapping.md', 'weekend-notes.md', 'table-examples.md', 'plain-text-example.txt', 'mixed-columns.pdf', 'margin-notes.pdf', 'colored-paper.pdf'];
+const mime = name => name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.txt') ? 'text/plain' : 'text/markdown';
+const payload = async name => ({ name, mimeType: mime(name), buffer: await readFile(path.join(samples, name)) });
+
+async function session(width, height = 844) {
+  const context = await browser.newContext({ viewport: { width, height }, isMobile: width < 1000, hasTouch: width < 1000, deviceScaleFactor: 2 });
+  const page = await context.newPage();
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(base); await expect(page.locator('#import')).toBeEnabled();
+  return { context, page, errors };
+}
+const library = async page => {
+  const toggle = page.locator('#library-toggle');
+  if (await page.locator('#library-close').isVisible() === false && await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  await page.waitForTimeout(260);
+};
+const shot = async (page, name, width) => { await page.waitForTimeout(350); await page.screenshot({ path: path.join(outDir, `${width}-${name}.png`) }); };
+const overflow = page => page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+
+const report = [];
+for (const width of widths) {
+  const desktop = width >= 1000;
+  const { page, context, errors } = await session(width, desktop ? 1000 : 844);
+  await shot(page, '00-empty', width);
+  await page.locator('#file-picker').setInputFiles(await Promise.all(files.map(payload)));
+  await expect(page.locator('#doc-count')).toHaveText(String(files.length), { timeout: 60000 });
+  await page.locator('#file-picker').setInputFiles([{ name: 'broken-export.txt', mimeType: 'text/plain', buffer: Buffer.from([0xff, 0xfe, 0, 0, 0xd8, 0x00, 0x00, 0xdc]) }]);
+  await page.waitForTimeout(800);
+  await shot(page, '01-library-imports', width);
+  await page.locator('#filter').fill('notes');
+  await shot(page, '02-library-filtered', width);
+  await page.locator('#filter').fill('zzz');
+  await shot(page, '03-library-no-match', width);
+  await page.locator('#filter').fill('');
+  await page.getByRole('button', { name: 'Delete colored-paper.pdf', exact: true }).click();
+  await shot(page, '04-delete-confirm', width);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.locator('[data-document-id="a-walk-by-the-river.md"] .document-card').click();
+  await page.waitForTimeout(400);
+  await shot(page, '05-reader-pages', width);
+  await page.locator('#passage').evaluate(el => { el.dispatchEvent(new Event('wheel')); el.scrollTop = el.scrollHeight * 0.45; el.dispatchEvent(new Event('scroll')); });
+  await page.locator('#passage').scrollIntoViewIfNeeded();
+  await shot(page, '06-browsing-away', width);
+  await page.locator('#passage-current').click();
+  await chooseMode(page, 'auto');
+  await page.locator('#speed').evaluate((el, value) => { el.value = String(value); el.dispatchEvent(new Event('input')); }, speedToSlider(120));
+  await page.locator('#play').click(); await page.waitForTimeout(1500);
+  await page.evaluate(() => scrollTo(0, 0));
+  await shot(page, '07-autoscroll-playing', width);
+  if (!desktop) { await library(page); await shot(page, '07b-library-while-playing', width); await page.locator('#library-close').click(); await page.waitForTimeout(260); }
+  await page.locator('#play').click();
+  await chooseMode(page,'page');
+  await page.locator('#tab-outline').click();
+  await shot(page, '08-contents', width);
+  await page.locator('#tab-search').click(); await page.locator('#search').fill('notebook');
+  await page.waitForTimeout(300);
+  await shot(page, '09-search', width);
+  await page.locator('#search').fill('xyzzy'); await page.waitForTimeout(300);
+  await shot(page, '10-search-no-match', width);
+  await page.locator('#tab-bookmarks').click();
+  await shot(page, '11-bookmarks-empty', width);
+  await page.locator('#bookmark').click();
+  await shot(page, '12-bookmarks', width);
+  await page.locator('#tool-close').click();
+  await library(page);
+  await page.locator('[data-document-id="table-examples.md"] .document-card').click();
+  await page.locator('#font-size').selectOption('12');
+  await page.locator('#passage').scrollIntoViewIfNeeded();
+  await shot(page, '13-table-records', width);
+  await page.locator('#font-size').selectOption('22');
+  await library(page);
+  await page.locator('[data-document-id="margin-notes.pdf"] .document-card').click();
+  await page.waitForTimeout(150);
+  await shot(page, '14-pdf-preparing', width);
+  await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 30000 });
+  await expect(page.locator('#pdf-passage canvas').first()).toBeVisible({ timeout: 30000 });
+  await page.locator('#tab-pdf').click();
+  await shot(page, '15-pdf-settings', width);
+  await page.locator('#pdf-margin-notes').check();
+  await page.locator('#pdf-reflow').check();
+  await page.waitForTimeout(200);
+  await shot(page, '16-pdf-rebuilding', width);
+  await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#pdf-text-size').selectOption('28'); await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 60000 });
+  await page.locator('#tool-close').click();
+  await page.locator('#pdf-passage').scrollIntoViewIfNeeded(); await page.waitForTimeout(600);
+  await shot(page, '17-pdf-reflow-passage', width);
+  await page.locator('#pdf-margin-notes').evaluate(el => { el.checked = false; el.dispatchEvent(new Event('change')); });
+  await page.locator('#pdf-reflow').evaluate(el => { el.checked = false; el.dispatchEvent(new Event('change')); });
+  await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 60000 });
+  const scanBytes = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 600; canvas.height = 800;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 600, 800);
+    ctx.fillStyle = 'black'; ctx.font = '24px sans-serif';
+    ['Field notes from the lower meadow.', 'The survey began at first light, along the', 'old fence line toward the water.', 'Figure 2 shows the transect.'].forEach((s, i) => ctx.fillText(s, 30, 70 + i * 34));
+    ctx.strokeRect(100, 250, 400, 160); ctx.beginPath(); ctx.moveTo(100, 400); ctx.lineTo(220, 280); ctx.lineTo(400, 360); ctx.stroke();
+    const rgba = ctx.getImageData(0, 0, 600, 800).data; const rgb = new Uint8Array(600 * 800 * 3);
+    for (let i = 0; i < 600 * 800; i++) rgb.set(rgba.subarray(i * 4, i * 4 + 3), i * 3);
+    let result = ''; for (let i = 0; i < rgb.length; i += 8192) result += String.fromCharCode(...rgb.subarray(i, i + 8192));
+    return btoa(result);
+  });
+  await page.locator('#file-picker').setInputFiles([{ name: 'scanned-notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from(scannedPdfFixture(600, 800, Buffer.from(scanBytes, 'base64'))) }]);
+  await library(page);
+  await page.locator('[data-document-id="scanned-notes.pdf"] .document-card').click();
+  await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 30000 });
+  await page.locator('#tab-pdf').click(); await page.locator('#pdf-reflow').check();
+  await page.waitForFunction(() => /recogn|OCR|Preparing/i.test(document.querySelector('#notice').textContent), null, { timeout: 30000 }).catch(() => {});
+  await page.evaluate(() => scrollTo(0, 0));
+  await shot(page, '18-pdf-ocr-progress', width);
+  await expect(page.locator('#bookmark')).toBeEnabled({ timeout: 120000 });
+  await shot(page, '19-pdf-ocr-done', width);
+  report.push({ width, horizontalOverflow: await overflow(page), errors });
+  await context.close();
+}
+console.log(JSON.stringify(report, null, 2));
+await browser.close(); server.close();

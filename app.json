@@ -1,0 +1,26 @@
+{
+  "package_id": "local.even.reader",
+  "edition": "202601",
+  "name": "Pageborne",
+  "version": "0.8.113",
+  "min_app_version": "2.2.9",
+  "min_sdk_version": "0.0.14",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "camera",
+      "desc": "Reads an Even Terminal pairing QR only when you choose Scan QR."
+    },
+    {
+      "name": "album",
+      "desc": "Reads a pairing QR from an image you choose. Images stay on this device."
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Records voice questions and audio tests when you start the microphone."
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
+}

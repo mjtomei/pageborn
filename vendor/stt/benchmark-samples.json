@@ -1,0 +1,53 @@
+[
+  {
+    "file": "1272-128104-0000.wav",
+    "reference": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL",
+    "source": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy"
+  },
+  {
+    "file": "1272-128104-0001.wav",
+    "reference": "NOR IS MISTER QUILTER'S MANNER LESS INTERESTING THAN HIS MATTER",
+    "source": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy"
+  },
+  {
+    "file": "1272-128104-0002.wav",
+    "reference": "HE TELLS US THAT AT THIS FESTIVE SEASON OF THE YEAR WITH CHRISTMAS AND ROAST BEEF LOOMING BEFORE US SIMILES DRAWN FROM EATING AND ITS RESULTS OCCUR MOST READILY TO THE MIND",
+    "source": "https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy"
+  },
+  {
+    "file": "1320-122617-0022.wav",
+    "reference": "THE DELAWARES ARE CHILDREN OF THE TORTOISE AND THEY OUTSTRIP THE DEER",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=100&length=2",
+    "speaker": 1320
+  },
+  {
+    "file": "1320-122617-0023.wav",
+    "reference": "UNCAS WHO HAD ALREADY APPROACHED THE DOOR IN READINESS TO LEAD THE WAY NOW RECOILED AND PLACED HIMSELF ONCE MORE IN THE BOTTOM OF THE LODGE",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=100&length=2",
+    "speaker": 1320
+  },
+  {
+    "file": "2961-960-0003.wav",
+    "reference": "THEY WERE ABSORBED IN HIS THEOLOGY AND WERE UNDER THE DOMINION OF HIS NAME WHILE THAT WHICH WAS TRULY GREAT AND TRULY CHARACTERISTIC IN HIM HIS EFFORT TO REALIZE AND CONNECT ABSTRACTIONS WAS NOT UNDERSTOOD BY THEM AT ALL",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=500&length=2",
+    "speaker": 2961
+  },
+  {
+    "file": "2961-960-0004.wav",
+    "reference": "THERE IS NO DANGER OF THE MODERN COMMENTATORS ON THE TIMAEUS FALLING INTO THE ABSURDITIES OF THE NEO PLATONISTS",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=500&length=2",
+    "speaker": 2961
+  },
+  {
+    "file": "8455-210777-0028.wav",
+    "reference": "JACK WOULD BECOME EVA'S HAPPY HUSBAND AND WOULD REMAIN AMIDST THE HURRIED DUTIES OF THE EAGER WORLD",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=1000&length=2",
+    "speaker": 8455
+  },
+  {
+    "file": "8455-210777-0029.wav",
+    "reference": "THINKING OF ALL THIS I WENT TO SLEEP",
+    "source": "https://datasets-server.huggingface.co/rows?dataset=openslr/librispeech_asr&config=clean&split=test&offset=1000&length=2",
+    "speaker": 8455
+  }
+]

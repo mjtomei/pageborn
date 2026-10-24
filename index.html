@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e110f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f3f1ea" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="Markdown and PDFs, on your glasses." />
+    <link rel="icon" type="image/svg+xml" href="/branding/pageborne-icon.svg" />
+    <title>Pageborne</title>
+  </head>
+  <body>
+    <main class="app">
+      <h1 class="visually-hidden">Pageborne</h1>
+      <aside id="library-panel" class="library-panel" aria-labelledby="library-heading" data-open="false">
+        <div class="library-head">
+          <a class="brand" href="#" aria-label="Pageborne home"><img class="brand-icon" src="/branding/pageborne-icon-foreground.svg" width="32" height="32" alt=""><strong>Pageborne</strong></a>
+          <span class="library-head-actions"><button id="settings-toggle" class="icon-button" aria-expanded="false" aria-controls="shared-settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 6h8M15 6h1.5M3.5 14h2M8.5 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="6.5" cy="14" r="2"/></svg></button><button id="library-close" class="icon-button library-close" aria-label="Close library"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l5-5 5 5"/></svg></button></span>
+        </div>
+        <div id="library-body" class="library-body">
+        <div class="library-title-row">
+          <h2 id="library-heading" class="library-title" tabindex="-1">Library <span id="doc-count" class="count">0</span></h2>
+          <div class="library-title-actions">
+            <button id="library-sync-summary" type="button" class="text-button sync-summary" aria-describedby="library-sync-help">Not set up</button><button id="library-sync" type="button" class="icon-button" aria-label="Sync library" title="Sync library" disabled><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1 7M4 4v6h6"/></svg></button>
+            <button id="library-help" type="button" class="help-button" aria-label="Help: Library">?</button>
+          </div>
+        </div>
+        <div class="library-actions">
+          <label class="search-box"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input id="filter" type="search" placeholder="Find a document" aria-label="Find a document"></label>
+          <button id="import" class="primary import-button" disabled><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add files</button><input id="file-picker" type="file" accept=".md,.markdown,.txt,.pdf,text/plain,text/markdown,application/pdf" multiple hidden>
+        </div>
+        <button id="library-librarian" class="text-button" type="button" disabled>Librarian</button>
+        <button id="library-sync-cancel" class="text-button library-sync-cancel" hidden>Cancel sync</button>
+        <div id="library-help-content">
+          <p class="muted">Add Markdown, plain text or PDF files from your phone. Your library is saved on this device. Tap a document to read it on your glasses, then use the glasses or the controls in the app to navigate.</p>
+          <p class="muted">Keep reading while files are being added. Open any file once it's added.</p>
+          <p id="library-sync-help" class="muted">Use the replay button beside Library to sync all PDFs, Markdown and text files with the shared desktop folder through your Even Terminal connection. In the glasses document picker, hold to sync. Select Librarian for a conversation across the shared library.</p>
+          <p class="muted">Additions, edits and deletions transfer both ways. Conflicting edits keep both copies; previous synced versions remain in the desktop folder’s hidden .pageborne/history directory. Ask uses this same library. Stock Terminal needs the optional Pageborne library extension.</p>
+        </div>
+        <p id="library-sync-status" role="status" class="muted" hidden></p>
+        <section id="imports" class="imports" aria-label="File imports" data-pending="0" hidden>
+          <div class="imports-heading"><p id="import-status" role="status"></p><span class="imports-actions"><button id="imports-details" class="text-button" aria-expanded="true" aria-controls="import-jobs" hidden>Details</button><button id="clear-imports" class="text-button">Clear</button></span></div>
+          <ul id="import-jobs" class="import-jobs"></ul>
+        </section>
+        <div id="documents" class="documents"></div>
+        </div>
+        <section id="shared-settings" class="pdf-controls settings-view" aria-labelledby="settings-heading" hidden>
+            <div class="settings-head"><h2 id="settings-heading" tabindex="-1">Settings</h2><button id="settings-done" class="text-button">Done</button></div>
+            <p class="muted">Shared by every document on this device, along with reading mode, speeds, word count and app text size.</p>
+            <nav class="settings-jump" aria-label="Settings sections"><a href="#theme-label">Appearance</a><a href="#settings-speed">Reading</a><a href="#settings-reading-ask">Ask</a><a href="#settings-connection-label">Connection</a><a href="#settings-voice">Voice</a></nav>
+            <h4 class="section-label" id="theme-label">Appearance</h4>
+            <label id="phone-font-control" class="setting-row">App text size<select id="font-size" aria-label="App text size"><option value="12" selected>Small</option><option value="22">Medium</option><option value="26">Large</option></select></label>
+            <div class="setting-row"><span>Theme</span><div id="theme-control" class="segmented theme-segmented" role="group" aria-labelledby="theme-label"><button id="theme-system" aria-pressed="true">System</button><button id="theme-light" aria-pressed="false">Light</button><button id="theme-dark" aria-pressed="false">Dark</button></div></div>
+            <h4 class="section-label" id="settings-speed">Speed read</h4>
+            <label class="setting-row switch-row"><span>Pause at section titles</span><input id="pause-at-titles" type="checkbox" role="switch" aria-describedby="title-pause-help"></label>
+            <p id="title-pause-help" class="muted">Wait for a tap at each title, like figures. When off, titles show at half your word rate.</p>
+            <h4 class="section-label">PDF autoscroll</h4>
+            <div id="entry-lines-control" class="speed-control stepper"><label for="entry-lines-value" id="entry-lines-label">After images</label><input id="entry-lines" type="range" min="1" max="9" step="1" value="3" hidden><button id="entry-lines-down" class="step-button" aria-label="Fewer lines after images"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9"/></svg></button><button id="entry-lines-value" type="button" class="value-button" aria-label="Enter initial lines after images" aria-describedby="entry-lines-help" aria-haspopup="dialog" aria-controls="value-dialog">3 lines</button><button id="entry-lines-up" class="step-button" aria-label="More lines after images"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button></div>
+            <p id="entry-lines-help" class="muted">Text lines shown first after an image, then the screen fills gradually. 9 starts with a full screen.</p>
+            <h4 class="section-label" id="settings-reading-ask">Reading and Ask</h4>
+            <div id="ask-model-settings" hidden>
+              <label class="ask-field">Default model for new chats<select id="ask-default-model"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+              <p class="muted">Existing chats keep their model. Choose a model in Ask for each document or Librarian; each keeps its own messages and desktop session.</p>
+            </div>
+            <p class="muted">Replies leave your current view in place. In Pages, tap to switch between reading and Ask. In Autoscroll and Speed read, double tap to switch; a single tap pauses or resumes reading. The reading screen shows reply progress and unread replies.</p>
+            <p class="muted">Shared across documents. You can also open Ask from the glasses menu. Swipes still turn pages or change speed.</p>
+            <p class="muted">Ask symbols: ○ waiting, ◐ writing, ● unread reply, ↑ sharing, ↔ connection interrupted, ! error, ? response needed. Tap guidance stays beside the symbol. Open Ask on your phone for details.</p>
+            <details id="ask-connection-settings" class="settings-section" open>
+            <summary class="section-summary"><span class="section-label" id="settings-connection-label">Ask connection</span><span id="ask-connection-summary" class="section-status">Not set up</span></summary>
+            <p class="muted">Ask about the passage you are reading. Connection settings apply to every document; desktop sessions are remembered separately for each paper.</p>
+            <label class="ask-field">Connect using<select id="ask-mode"><option value="provider">Custom provider &amp; API key</option><option value="terminal">Desktop sessions · Even Terminal</option><option id="ask-legacy-option" value="bridge" hidden>Existing Pageborne bridge</option></select></label>
+            <div id="ask-provider-fields">
+              <label class="ask-field">API format<select id="ask-protocol"><option value="openai-compatible">OpenAI compatible</option><option value="anthropic">Anthropic Messages</option></select></label>
+              <label class="ask-field">API base URL<input id="ask-provider-url" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false"></label>
+              <label class="ask-field">Model<input id="ask-model" placeholder="Model name from your provider" autocomplete="off" spellcheck="false"></label>
+              <label class="ask-field">API key<input id="ask-api-key" type="password" autocomplete="off" spellcheck="false"></label>
+              <p class="muted">Requests go directly to this provider. Leave the key empty only if your endpoint does not require one.</p>
+            </div>
+            <div id="ask-desktop-fields" hidden>
+              <div id="ask-pairing-import">
+                <label class="ask-field">Even Terminal pairing URL<input id="ask-pairing-url" type="password" placeholder="Paste the URL printed by Even Terminal" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="ask-pairing-help"></label>
+                <div class="ask-actions"><button id="ask-pairing-use" class="secondary" type="button">Use URL</button><button id="ask-qr-scan" class="secondary" type="button">Scan QR</button><button id="ask-qr-choose" class="text-button" type="button">Choose QR image</button><button id="ask-qr-cancel" class="text-button" type="button" hidden>Cancel QR import</button></div>
+                <input id="ask-qr-camera" type="file" accept="image/*" capture="environment" hidden>
+                <input id="ask-qr-file" type="file" accept="image/*" hidden>
+                <p id="ask-pairing-help" class="muted">Use the same URL or QR as Even Terminal. Take a photo of its QR code or choose a screenshot. The address, token and agent fill in below; save when ready. Images are read on this device.</p>
+                <p id="ask-pairing-status" class="muted" role="status"></p>
+              </div>
+              <label class="ask-field">Server URL<input id="ask-endpoint" type="url" placeholder="https://your-terminal.example" autocomplete="off" spellcheck="false"></label>
+              <label class="ask-field">Access token<input id="ask-token" type="password" autocomplete="off" spellcheck="false"></label>
+              <div id="ask-terminal-options">
+                <label class="ask-field">Agent<select id="ask-agent"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+                <label class="ask-field">Working directory · optional<input id="ask-cwd" placeholder="Existing absolute path on the desktop" autocomplete="off" spellcheck="false"></label>
+                <p class="muted">Connect directly to Even Terminal with its URL and pairing token. Leave the directory empty to use its default. Each paper has a separate conversation; you can override the directory in Ask before starting it. Directories must already exist.</p>
+                <label class="setting-row switch-row"><span>Create separate session folders · custom Terminal</span><input id="ask-folders" type="checkbox" role="switch"></label>
+                <div id="ask-folder-options" hidden><label class="ask-field">Folder base<input id="ask-base-dir" placeholder="~/.pageborne/papers" autocomplete="off" spellcheck="false"></label><p class="muted">Requires a Terminal server with folder support. Each new session gets its own folder, grouped by paper. Existing sessions stay in their original directory.</p></div>
+                <p class="muted">In Ask, you can also choose an existing Even Terminal session. Set model, reasoning and permissions on the desktop; Even Terminal does not expose those controls here.</p>
+              </div>
+            </div>
+            <details id="ask-speech-fields"><summary>Voice · optional speech-to-text endpoint</summary>
+              <p class="muted">Used only when Voice input is set to Speech provider. Recordings are then sent to this provider.</p>
+              <label class="ask-field">Speech API base URL<input id="ask-speech-url" type="url" placeholder="https://your-speech-provider.example/v1" autocomplete="off" spellcheck="false"></label>
+              <label class="ask-field">Speech model<input id="ask-speech-model" autocomplete="off" spellcheck="false"></label>
+              <label class="ask-field">Speech API key<input id="ask-speech-key" type="password" autocomplete="off" spellcheck="false"></label>
+            </details>
+            <p class="muted">Addresses must be enabled in the installed app build. Keys and tokens are saved on this phone until you forget the connection. Desktop conversations are saved by the desktop agent.</p>
+            <div class="ask-actions"><button id="ask-config-save" class="secondary">Save connection</button><button id="ask-config-clear" class="text-button">Forget connection</button></div>
+            <p id="ask-config-status" class="muted" role="status"></p>
+            </details>
+            <details id="settings-voice" class="settings-section">
+            <summary class="section-summary"><span class="section-label">Voice input</span><span id="speech-backend-summary" class="section-status">On device</span></summary>
+            <label class="ask-field">Transcribe using<select id="speech-backend"><option value="wasm">On device · CPU / SIMD</option><option value="remote">Speech provider · configured endpoint</option></select></label>
+            <label class="ask-field">Custom vocabulary<textarea id="speech-vocabulary" rows="3" maxlength="4000" placeholder="Pageborne, Kantorowicz, JEV" aria-describedby="speech-vocabulary-help"></textarea></label>
+            <p id="speech-vocabulary-help" class="muted">Names and technical terms, separated by commas or new lines. Shared across documents and prioritized over automatic terms. Each model uses as many as it can fit. These guide local transcription; they do not force a spelling.</p>
+            <label class="setting-row switch-row"><span>Use words from this paper and chat</span><input id="speech-context-vocabulary" type="checkbox" role="switch" checked></label>
+            <button id="speech-vocabulary-show" type="button" class="secondary">View vocabulary hints</button>
+            <div id="speech-vocabulary-details">
+              <p class="muted">Custom terms come first, followed by words from your reading position and recent conversation. Hints encourage a spelling; they do not force it.</p>
+              <p id="speech-vocabulary-source" class="muted"></p>
+              <label class="ask-field"><span id="speech-vocabulary-count">Next recording</span><textarea id="speech-vocabulary-preview" rows="8" readonly spellcheck="false" aria-label="Vocabulary hints for next recording"></textarea></label>
+              <button id="speech-vocabulary-refresh" type="button" class="secondary">Refresh for current position</button>
+              <details id="speech-vocabulary-last">
+                <summary>Last transcription</summary>
+                <p id="speech-vocabulary-last-status" class="muted"></p>
+                <label class="ask-field">Hints sent<textarea id="speech-vocabulary-last-terms" rows="6" readonly spellcheck="false" aria-label="Vocabulary hints sent to last transcription"></textarea></label>
+              </details>
+            </div>
+            <p class="muted">Local dictation shows provisional words while you speak. Stop speaking to edit the final draft or send it.</p>
+            <p class="muted">Conformer Small, Zipformer 20M and Moonshine Base run together on the CPU. First-open setup downloads about 249 MB once, then checks and keeps the models ready until exit. Verified downloads are reused across app updates while saved app data is retained. Audio stays on this device; the recognized question goes to your agent. Gray words have combined confidence below 0.70; they may still be correct. The glasses dim the newest uncertain words that fit; the phone marks all of them.</p>
+            <p id="speech-status" class="muted" role="status"></p>
+            <button id="speech-retry" type="button" class="secondary" hidden>Retry voice</button>
+            </details>
+          </section>
+      </aside>
+      <div id="library-scrim" class="scrim" hidden></div>
+
+      <section class="reading-panel" aria-label="Reader">
+        <div class="reader-content">
+        <header class="reader-header">
+          <button id="library-toggle" class="doc-switcher" aria-expanded="false" aria-controls="library-panel">
+            <span class="doc-switcher-text"><span id="title">Choose something good.</span><span id="doc-path">Select a document from your library.</span></span>
+            <span id="import-badge" class="badge" hidden></span>
+            <svg class="chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+            <span class="visually-hidden">Library</span>
+          </button>
+          <button id="bookmark-quick" class="icon-button" aria-label="Bookmark this position" title="Bookmark this position" disabled><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10v14l-5-3.5L5 17z"/></svg></button>
+          <button id="reader-settings-toggle" class="icon-button" aria-expanded="false" aria-controls="shared-settings" aria-label="Settings" title="Settings"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 6h8M15 6h1.5M3.5 14h2M8.5 14h8"/><circle cx="13" cy="6" r="2"/><circle cx="6.5" cy="14" r="2"/></svg></button>
+        </header>
+
+        <div class="preview-wrap">
+          <div class="preview-label"><span class="connection-line"><i aria-hidden="true"></i><span id="connection-state" class="connection-state" aria-hidden="true">Preview</span><span id="connection" class="connection visually-hidden">Phone preview</span></span><span class="preview-actions"><button id="preview-menu-toggle" class="text-button" type="button" aria-expanded="false" aria-controls="preview" aria-label="Glasses app menu">Menu</button><button id="hints-toggle" class="hints-toggle" aria-expanded="false" aria-controls="glasses-hints" aria-label="Glasses gestures"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.4"/><circle cx="8" cy="11.6" r=".4" fill="currentColor"/></svg></button><button id="reconnect">Reconnect</button></span></div>
+          <canvas id="preview" width="576" height="288" role="button" tabindex="0" aria-describedby="gesture-note keyboard-note" aria-label="Preview of the page sent to your glasses"></canvas>
+          <div id="glasses-hints" class="glasses-hints"><p id="auto-note" class="gesture-note" hidden>Advances one line at a time. Choose a speed, then tap Start. Jumping to another position pauses playback.</p><p id="gesture-note" class="gesture-note">Swipe to turn a page · Tap for the next page · Double tap for documents.</p><p class="gesture-note">Speech review: swipe to choose Send or Cancel, then tap. For longer questions, swipe past Cancel for the next part, or above Send for the previous part.</p><details class="preview-keyboard-help" open><summary>Preview &amp; keyboard controls</summary><p id="keyboard-note" class="gesture-note"></p></details></div>
+        </div>
+        <div class="jump-row"><button id="page-value" type="button" class="value-button page-button" aria-label="Page 1 of 1. Enter page number" aria-haspopup="dialog" aria-controls="value-dialog" title="Enter a page number">Page 1 of 1</button><input id="page-number" type="hidden" value="1" min="1" max="1"><button id="start" class="text-button">Back to start</button></div>
+
+        <div class="reader-sticky">
+          <div id="notice" role="status" class="notice" hidden><span id="notice-text"></span><!-- debug:start --><button id="error-export" class="secondary" hidden>Export debug log</button><!-- debug:end --></div>
+          <div class="navigation-tabs" role="group" aria-label="Document tools">
+            <button id="tab-outline" aria-pressed="false" aria-controls="tool-panel">Contents</button>
+            <button id="tab-search" aria-pressed="false" aria-controls="tool-panel">Search</button>
+            <button id="tab-bookmarks" aria-pressed="false" aria-controls="tool-panel">Marks<span id="bookmark-count" class="tab-count"></span></button>
+            <button id="tab-pdf" aria-pressed="false" aria-controls="tool-panel" hidden>PDF</button>
+            <button id="ask-open" type="button">Ask</button>
+          </div>
+        </div>
+
+        <div id="tool-panel" class="tool-panel" hidden>
+          <div class="tool-panel-head"><h3 id="tool-title">Contents</h3><button id="tool-close" class="text-button">Hide</button></div>
+          <div id="outline" class="navigation-content" hidden></div>
+          <div id="search-pane" class="navigation-content" hidden><label class="search-box"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg><input id="search" type="search" aria-label="Search this document" placeholder="Search this document" enterkeyhint="search"></label><div id="search-step" class="search-step" hidden><button id="search-prev" class="step-button" aria-label="Previous match"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button><span id="search-count" role="status">0 of 0</span><button id="search-next" class="step-button" aria-label="Next match"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button></div><div id="search-results"></div></div>
+          <div id="bookmarks-pane" hidden>
+            <button id="bookmark" class="secondary bookmark-add" disabled><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10v14l-5-3.5L5 17z"/></svg>Bookmark this position</button>
+            <div id="bookmarks" class="navigation-content"></div>
+          </div>
+          <div id="pdf-controls" class="pdf-controls" aria-describedby="pdf-saved-note" hidden>
+            <div class="pane-action"><button id="pdf-footnotes" class="secondary" hidden>Footnotes</button><p class="muted">Recognized notes, kept out of the reading stream. Return to your place, paused.</p></div>
+            <h4 class="section-label">Formatting</h4>
+            <p id="pdf-saved-note" class="muted">Saved for this PDF only. Changes rebuild the preview and keep your place; the original file isn't changed.</p>
+            <p id="pdf-reflow-help" class="muted"><strong>Reflow body text:</strong> Prose uses the glasses’ native text; figures, tables and equations stay images. Scans use on-device OCR, which can be slow and may contain errors.</p>
+            <p id="pdf-figures-help" class="muted"><strong>Fit figures to one screen:</strong> Very tall figures stay scrollable. Turn off for more detail in dense figures.</p>
+            <p id="pdf-margin-help" class="muted"><strong>Keep margin notes:</strong> Side notes and stamps. Only those lines shrink to fit.</p>
+            <p id="pdf-repeated-help" class="muted"><strong>Keep headers &amp; page numbers:</strong> off hides page numbers, running headers and footers, and download watermarks.</p>
+            <p id="pdf-colors-help" class="muted"><strong>Normalize PDF colors:</strong> Dark ink on light paper here, bright ink on the glasses.</p>
+            <label class="setting-row">Columns <select id="pdf-layout"><option value="auto">Automatic</option><option value="single">Single column</option><option value="double">Two columns</option></select></label>
+            <div class="setting-group">
+              <label class="setting-row switch-row"><span>Reflow body text</span><input id="pdf-reflow" type="checkbox" role="switch" aria-describedby="pdf-reflow-help"></label>
+              <label id="pdf-text-size-control" class="setting-row sub-row" hidden>Preview text size <select id="pdf-text-size"><option value="20" selected>Small · 20</option><option value="24">Medium · 24</option><option value="28">Large · 28</option></select></label>
+            </div>
+            <label class="setting-row switch-row"><span>Fit figures to one screen</span><input id="pdf-fit-figures" type="checkbox" role="switch" checked aria-describedby="pdf-figures-help"></label>
+            <label class="setting-row switch-row"><span>Keep margin notes</span><input id="pdf-margin-notes" type="checkbox" role="switch" aria-describedby="pdf-margin-help"></label>
+            <label class="setting-row switch-row"><span>Keep headers &amp; page numbers</span><input id="pdf-repeated-text" type="checkbox" role="switch" aria-describedby="pdf-repeated-help"></label>
+            <label class="setting-row switch-row"><span>Normalize PDF colors</span><input id="pdf-colors" type="checkbox" role="switch" checked aria-describedby="pdf-colors-help"></label>
+            <h4 class="section-label">Defaults for new PDFs</h4>
+            <div class="pdf-default-actions"><button id="pdf-save-defaults" class="secondary">Use as PDF defaults</button><button id="pdf-reset-defaults" class="text-button">Reset this PDF to defaults</button></div>
+            <p class="muted">Defaults apply the first time you open a PDF. Opened PDFs keep their own formatting.</p>
+            <p id="pdf-default-status" class="muted" role="status"></p>
+          </div>
+        </div>
+
+        <button id="ask-footer" class="text-button ask-footer" type="button" aria-live="polite" aria-controls="ask-panel" hidden>Ask · No new replies</button>
+        <section id="ask-panel" class="tool-panel ask-panel" aria-label="Ask about this" hidden>
+          <div class="ask-head">
+          <div class="tool-panel-head ask-title-row"><h3 class="ask-title"><span class="ask-title-label">Ask</span><span id="ask-state" class="ask-state" data-state="idle" role="status" aria-label="No new replies"></span><span id="ask-context" class="ask-context"></span></h3><div class="ask-head-actions"><button id="ask-help" type="button" class="help-button" aria-label="Help: Ask about this">?</button></div></div>
+          <label id="ask-chat-model-field" class="ask-model-choice" hidden>Model<select id="ask-chat-model" aria-label="Model for this chat"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+          <details class="ask-details"><summary aria-label="Context and session"><span aria-hidden="true">⋯</span><span class="ask-details-label">Context and session</span></summary><div class="ask-details-content">
+          <details id="ask-paper-session" hidden><summary>Session for this paper</summary>
+            <p id="ask-session-label" class="muted" role="status"></p>
+            <label class="ask-field">Desktop session<select id="ask-session-choice" aria-label="Desktop session"><option value="">Choose a session after refreshing</option></select></label>
+            <div class="ask-actions"><button id="ask-sessions-refresh" type="button" class="secondary">Refresh sessions</button><button id="ask-session-use" type="button" class="secondary">Use selected session</button><button id="ask-session-new" type="button" class="text-button">New session for this paper</button></div>
+            <div id="ask-paper-directory-settings">
+            <button id="ask-workspace" type="button" class="text-button" hidden>Prepare session folder</button>
+            <label class="ask-field">Working directory for this paper<input id="ask-paper-cwd" placeholder="Even Terminal default" autocomplete="off" spellcheck="false"></label>
+            <p class="muted">Use an existing absolute path. Even Terminal may fall back to its default if the path is missing. Linked sessions keep their current directory.</p>
+            </div>
+            <p id="ask-session-help" class="muted">Use a dedicated session for this paper. New session unlinks the current one; its desktop conversation is kept.</p>
+          </details>
+          <button id="ask-check-reply" type="button" class="secondary" hidden>Check reply</button>
+          <details><summary><span id="ask-source-label">Passage included when you ask</span> <span id="ask-context-size" class="muted"></span></summary><pre id="ask-passage"></pre></details>
+          <button id="ask-settings-link" class="text-button" type="button">Connection settings</button>
+          <p id="ask-history-help" class="muted">Recent questions asked here are saved on this device, separately for each paper.</p>
+          </div></details>
+          </div>
+          <div class="ask-thread">
+            <div id="ask-history" tabindex="0" role="region" aria-label="Conversation history">
+              <p id="ask-empty" class="muted">No messages yet.</p>
+              <div id="ask-messages"><div id="ask-answer"></div></div>
+            </div>
+            <div id="ask-scrollbar" role="scrollbar" aria-controls="ask-history" aria-label="Scroll conversation" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"><span class="ask-scroll-thumb" aria-hidden="true"></span></div>
+            <button id="ask-latest" class="secondary" type="button" hidden>Latest message ↓</button>
+          </div>
+          <div class="ask-composer">
+          <div class="ask-status-row"><p id="ask-status" role="status"></p><button id="ask-review-cancel" class="text-button" type="button" aria-label="Cancel dictated question" hidden>Cancel</button></div>
+          <form id="ask-form"><label class="visually-hidden" for="ask-question">Your question</label><div class="ask-question-wrap"><div id="ask-question-colors" aria-hidden="true" hidden></div><textarea id="ask-question" rows="1" maxlength="64000" enterkeyhint="send" placeholder="Ask about this paper…"></textarea></div><button id="ask-voice" class="secondary icon-button" type="button" aria-pressed="false" aria-label="Start dictation" title="Start dictation"><svg class="ask-mic-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/></svg><svg class="ask-mic-send-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6"/></svg></button><button id="ask-send" class="primary icon-button" type="submit" aria-label="Send question" title="Send question"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6"/></svg></button></form>
+          <p id="ask-voice-help" class="muted">Hold on the glasses to speak, or tap the microphone. Release to review your question; you can edit it on the phone before sending. Swipe through replies on the glasses, hold for a follow-up, or tap to return to reading. A supported desktop receives the paper’s files and your reading location, without quoted text in the question. Other connections receive up to 100,000 estimated tokens around your current place.</p>
+          <p id="ask-voice-models" class="muted" role="status"></p>
+          <p id="ask-voice-metrics" class="muted" role="status"></p>
+          </div>
+        </section>
+        <div class="passage-heading">
+          <div class="passage-title"><p class="eyebrow" id="passage-label">Read from here</p><span class="passage-actions"><button id="passage-current" class="follow-button" aria-pressed="true">Show current line</button></span></div>
+          <p id="passage-help" class="muted passage-help">Scroll through the document. Tap a line to read from there on your glasses.</p>
+        </div>
+        <div id="passage" tabindex="0" role="region" aria-labelledby="passage-label"></div><div id="pdf-passage" tabindex="0" role="region" aria-labelledby="passage-label" hidden></div>
+        <section id="pdf-gallery" aria-labelledby="figures-label" hidden>
+          <p class="eyebrow" id="figures-label">Figures &amp; tables</p>
+          <div class="figure-strip" tabindex="0" role="region" aria-label="Figures and tables gallery"></div>
+        </section>
+
+        <p class="muted" id="app-version"></p>
+        <!-- debug:start --><details class="settings"><summary>Diagnostics · <span id="debug-version"></span></summary><p class="muted">Export error details and recent actions to help fix a problem. Includes app/browser versions and PDF processing steps, without attaching your files or extracted text.</p><button id="debug-export" class="secondary">Export debug log</button></details><!-- debug:end -->
+        </div>
+
+        <div id="reader-controls" class="dock" data-expanded="false" data-menu="closed">
+          <div id="mode-menu" class="segmented mode-menu" role="group" aria-label="Reading mode"><button id="mode-page" aria-pressed="true">Pages</button><button id="mode-auto" aria-pressed="false">Autoscroll</button><button id="mode-speed" aria-pressed="false">Speed read</button></div>
+          <div id="dock-options" class="dock-options">
+              <div id="speed-control" class="speed-control" hidden><button id="speed-down" class="step-button" aria-label="Slower">−</button><input id="speed" type="range" min="0" max="1000" step="1" value="459" aria-label="Autoscroll speed"><button id="speed-up" class="step-button" aria-label="Faster">+</button><button id="speed-value" type="button" class="value-button" aria-label="Enter autoscroll speed" aria-haspopup="dialog" aria-controls="value-dialog" title="Enter an autoscroll rate">30 l/min</button></div>
+              <div id="word-group-control" class="speed-control stepper" hidden><label for="word-group-value">Words per group</label><input id="word-group" type="range" min="1" max="10" step="1" value="3" hidden><button id="word-group-down" class="step-button" aria-label="Fewer words"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3.5 8h9"/></svg></button><button id="word-group-value" type="button" class="value-button" aria-label="Enter words per group" aria-haspopup="dialog" aria-controls="value-dialog">3 words</button><button id="word-group-up" class="step-button" aria-label="More words"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg></button></div>
+          </div>
+          <div class="position-row"><button id="dock-toggle" class="dock-toggle" aria-expanded="false" aria-controls="mode-menu" aria-haspopup="true"><span class="dock-summary-text"><span id="dock-summary">Pages</span></span><svg class="dock-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></button><label class="position-label" for="position"><span id="position-caption">Your place</span></label><div class="position-track"><div id="position-landmarks" class="position-landmarks" aria-hidden="true"></div><input id="position" type="range" min="0" max="1000" value="0" step="1" aria-label="Reading position"><output id="scrub-label" class="scrub-label" for="position" hidden></output></div><button id="position-value" type="button" class="value-button" aria-label="Enter reading position" aria-haspopup="dialog" aria-controls="value-dialog" title="Enter a percentage">0%</button></div>
+          <div id="transport-row" class="transport-row">
+  <div id="transport" class="transport"><button id="previous" class="secondary" aria-label="Previous page"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5 7 10l5 5"/></svg></button><button id="play" class="primary">Next page</button><button id="next" class="secondary" aria-label="Next page"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5l5 5-5 5"/></svg></button></div>
+            <button id="pace-toggle" class="pace-toggle" type="button" aria-expanded="false" aria-controls="dock-options" hidden><span id="dock-pace" class="dock-pace">30 l/min</span><svg class="dock-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
+          </div>
+        </div>
+
+      </section>
+    </main>
+    <dialog id="speech-setup" aria-labelledby="speech-setup-title" aria-describedby="speech-setup-help">
+      <h2 id="speech-setup-title" tabindex="-1">Preparing voice</h2>
+      <p id="speech-setup-help">Checking saved voice models…</p>
+      <div class="speech-setup-models"></div>
+      <p class="speech-setup-status" role="status"></p>
+      <button id="speech-setup-retry" type="button" class="primary" hidden>Retry setup</button>
+      <!-- debug:start --><button id="speech-setup-export" type="button" class="secondary">Export setup log</button><!-- debug:end -->
+    </dialog>
+    <dialog id="figure-dialog" aria-labelledby="figure-title">
+      <header class="figure-heading"><h2 id="figure-title" class="figure-title"></h2><button type="button" class="figure-close text-button" aria-label="Close figure">Close</button></header>
+      <div class="figure-stage"><div class="figure-image"></div><p class="figure-caption" tabindex="0" aria-label="Figure caption"></p><p class="figure-loading muted" role="status"></p></div>
+      <footer class="figure-navigation"><button type="button" class="figure-previous secondary" aria-label="Previous figure">←</button><span class="figure-count muted"></span><button type="button" class="figure-next secondary" aria-label="Next figure">→</button></footer>
+    </dialog>
+    <dialog id="value-dialog" aria-labelledby="value-title" aria-describedby="value-help">
+      <form id="value-form">
+        <h2 id="value-title">Reading position</h2>
+        <label for="value-input" id="value-label">Percentage</label>
+        <input id="value-input" type="number" inputmode="decimal" required autofocus>
+        <p id="value-help" class="muted"></p>
+        <div class="value-actions"><button id="value-cancel" type="button" class="secondary">Cancel</button><button id="value-apply" type="submit" class="primary">Go</button></div>
+      </form>
+    </dialog>
+    <!-- debug:start --><dialog id="debug-dialog" aria-labelledby="debug-title" aria-describedby="debug-help">
+      <div class="debug-heading"><h2 id="debug-title">Debug log</h2><button id="debug-close" class="text-button">Close</button></div>
+      <p id="debug-help" class="muted">Includes error messages, device/browser details and processing steps. Your documents and extracted text are not attached.</p>
+      <div class="debug-actions"><button id="debug-share" class="primary" hidden>Share file</button><button id="debug-download" class="secondary">Save file</button><button id="debug-copy" class="secondary">Copy log</button></div>
+      <p id="debug-status" class="muted" role="status"></p>
+      <details id="debug-contents"><summary>View log</summary><textarea id="debug-text" readonly aria-label="Debug log contents" spellcheck="false"></textarea></details>
+    </dialog><!-- debug:end -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,225 @@
+--- a/dist/routes/core.js
++++ b/dist/routes/core.js
+@@ -1,9 +1,13 @@
+ import { Router } from "express";
++import { readFileSync } from 'node:fs';
++import path from 'node:path';
+ import { getDefaultProvider, isProvider, parseProvider, SUPPORTED_PROVIDERS } from "../session.js";
+ import { broadcast, pushMessage, getMessages, setSessionProviderResolver } from "./events.js";
+ import { createClaudeProvider } from "../claude/provider.js";
+ import { createSharedClaudeProvider } from "../claude/shared/provider.js";
+ import { createRemoteClaudeProvider } from "../claude/remote/provider.js";
++import { createNativeSessionLauncher } from "../claude/remote/launcher.js";
++import { libraryManifest } from "./pageborne-library.js";
+ import { createCodexProvider } from "../codex/provider.js";
+ // cursor/opencode hidden in 0.8.1 (experimental) — re-enable alongside SUPPORTED_PROVIDERS.
+ // import { createCursorProvider } from "../cursor/provider.js";
+@@ -37,7 +41,13 @@
+ }
+ const codexClient = new CodexAppServerClient();
+ const claudeMode = process.env.EVEN_CLAUDE_MODE || "remote";
+-const claudeProvider = claudeMode === "remote" ? createRemoteClaudeProvider(emit)
++let pageborneClaude = {};
++try { if (process.env.EVEN_TERMINAL_STATE_DIR) pageborneClaude = JSON.parse(readFileSync(path.join(process.env.EVEN_TERMINAL_STATE_DIR, 'pageborne-claude.json'), 'utf8')); }
++catch (error) { if (error.code !== 'ENOENT') throw error; }
++const claudeProvider = claudeMode === "remote" ? createRemoteClaudeProvider(emit, {
++    launcher: createNativeSessionLauncher({ model: process.env.PAGEBORNE_CLAUDE_MODEL || pageborneClaude.model,
++        cli: process.env.PAGEBORNE_CLAUDE_CLI || pageborneClaude.cli }),
++})
+     : claudeMode === "shared" ? createSharedClaudeProvider(emit) : createClaudeProvider(emit);
+ const codexProvider = createCodexProvider(emit, () => codexClient);
+ // const cursorProvider = createCursorProvider(emit);
+@@ -91,11 +101,25 @@
+     const provider = getProvider(providerName);
+     try {
+         const info = await provider.getInfo();
+-        res.json({ ...info, pageborne: { ...workspaceCapabilities(), ...sessionTitleCapabilities(provider), ...conversationCapabilities(provider) } });
++        res.json({ ...info, pageborne: { ...workspaceCapabilities(), ...sessionTitleCapabilities(provider), ...conversationCapabilities(provider),
++            ...(provider.prepareSession ? { nativeSessionCreation: 1 } : {}) } });
+     }
+     catch (err) {
+         res.json({ account: {}, model: "Unknown", version: "Unknown", error: err.message });
+     }
++});
++// Idempotently prepare a native owner before submitting any user question.
++// Retrying this operation cannot duplicate prompts or fork an existing chat.
++router.post('/pageborne/session', async (req, res) => {
++    try {
++        const provider = getProvider(req.query.provider);
++        if (!provider.prepareSession) return res.status(404).json({ error: 'Native session creation unavailable.' });
++        const { requestId, cwd, title } = req.body || {};
++        const directory = cwd || (await libraryManifest()).directory;
++        const result = await provider.prepareSession({ requestId, cwd: directory, title });
++        providerRouting.remember(result.sessionId, result.provider);
++        res.json(result);
++    } catch (error) { res.status(error.statusCode || 502).json({ error: error.message || 'Could not prepare the shared Claude session.' }); }
+ });
+ // GET /api/update-check — current app version and latest npm version
+ router.get("/update-check", async (_req, res) => {
+--- a/dist/claude/remote/provider.js
++++ b/dist/claude/remote/provider.js
+@@ -5,7 +5,7 @@
+ import { sessionHasClients } from '../../routes/events.js';
+
+ export function createRemoteClaudeProvider(emit, { client = new ClaudeRemoteClient(), bindings = localBindings,
+-    pollMs = 1000, idleTtlMs = 180000 } = {}) {
++    pollMs = 1000, idleTtlMs = 180000, launcher } = {}) {
+     const entries = new Map();
+     let closed = false, listing, listingAt = 0, listingPromise;
+     const state = entry => entry.transcript.pending.size || entry.metadata?.requires_action_details_list?.length ? 'awaiting'
+@@ -62,14 +62,14 @@
+                 const beforeCursor = entry.cursor;
+                 if (!entry.hydrated) {
+                     // Fetch recent history first. Older pages are only needed if
+-                    // tool traffic displaced the last ten visible messages.
++                    // tool traffic displaced the recent shared conversation.
+                     const history = [];
+                     let cursor;
+-                    for (let page = 0; page < 5; page++) {
++                    for (let page = 0; page < 10; page++) {
+                         const result = await client.events(entry.cloudId, { order: 'desc', cursor });
+                         history.push(...result.data);
+                         const visible = history.filter(e => ['user', 'assistant'].includes(e.payload?.type) && !e.payload?.parent_tool_use_id && textContent(e.payload?.message?.content).trim());
+-                        if (!result.next_cursor || visible.filter(e => e.payload.type === 'user').length >= 5) break;
++                        if (!result.next_cursor || visible.filter(e => e.payload.type === 'user').length >= 40) break;
+                         if (result.next_cursor === cursor) throw fail('Claude event pagination did not advance', 502);
+                         cursor = result.next_cursor;
+                     }
+@@ -162,6 +162,11 @@
+     timer.unref();
+     return {
+         attach,
++        ...(launcher ? { async prepareSession(input) {
++            const record = await launcher.prepare(input);
++            await writable(record.sessionId);
++            return { ...record, provider: 'claude' };
++        } } : {}),
+         hasSession: id => remoteId(id) || entries.has(id) || bindings().some(binding => binding.localId === id),
+         async listSessions(limit = 10, cwd) {
+             const sessions = await listRemote(), local = bindings();
+@@ -174,10 +179,11 @@
+             }).filter(session => !cwd || session.cwd === cwd).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+                 .slice(0, Math.max(1, Math.min(limit, 100)));
+         },
+-        async getInfo() { return { account: {}, model: 'Claude (Remote Control)', version: 'Native session', provider: 'claude' }; },
++        async getInfo() { return { account: {}, model: launcher?.model || 'Claude (Remote Control)', version: 'Native session', provider: 'claude' }; },
+         getStatus(id) { const entry = entries.get(id); return entry?.hydrated ? { state: state(entry), provider: 'claude', connected: entry.connected } : null; },
+         async getSessionStatus(id) { return state(await attach(id)); },
+         async getHistory(id, limit) { const entry = await attach(id); await refresh(entry); return entry.transcript.history(limit); },
++        async getConversation(id) { const entry = await attach(id); await refresh(entry); return entry.transcript.snapshot(state(entry)); },
+         initialMessages(id, includeText = true) {
+             const entry = entries.get(id);
+             if (!entry?.hydrated) return [];
+--- a/dist/claude/remote/transcript.js
++++ b/dist/claude/remote/transcript.js
+@@ -10,6 +10,8 @@
+     entries = new Map();
+     seen = new Set();
+     pending = new Map();
++    outcomes = new Map();
++    lastUser;
+     constructor(id, emit) { this.id = id; this.emit = emit; }
+     ingest(envelope, notify = true) {
+         const event = envelope.payload;
+@@ -23,6 +25,7 @@
+             const text = textContent(event.message?.content);
+             if (text.trim() && !event.isMeta && !event.isSynthetic) {
+                 this.entries.set(key, { role: event.type, text });
++                if (event.type === 'user') this.lastUser = key;
+                 if (this.entries.size > 1000) this.entries.delete(this.entries.keys().next().value);
+                 send(event.type === 'user' ? { type: 'user_prompt', text } : { type: 'text_delta', text: `\n\n${text}` });
+             }
+@@ -42,6 +45,8 @@
+                 send({ type: 'permission_result', toolUseId: requestId, toolName: request.tool_name, decision: 'resolved', resolvedExternally: true, summary: 'Request answered in Claude' });
+             }
+         } else if (event.type === 'result') {
++            if (this.lastUser) this.outcomes.set(this.lastUser, event.is_error ? 'failed' : 'completed');
++            if (this.outcomes.size > 1000) this.outcomes.delete(this.outcomes.keys().next().value);
+             send({ type: 'result', success: !event.is_error, text: event.result || '', sessionId: this.id, provider: 'claude',
+                 costUsd: event.total_cost_usd || 0, turns: event.num_turns || 1, durationMs: event.duration_ms || 0 });
+         }
+@@ -60,6 +65,18 @@
+         }
+         return grouped.slice(-Math.max(1, Math.min(Number(limit) || 10, 10)));
+     }
++    snapshot(state = 'idle') {
++        const turns = [];
++        for (const [key, entry] of this.entries) {
++            if (entry.role === 'user' || !turns.length) turns.push({ id: `claude:${key}`, status: this.outcomes.get(key) || 'completed', items: [] });
++            turns.at(-1).items.push(entry.role === 'user'
++                ? { id: key, type: 'userMessage', content: [{ type: 'text', text: entry.text }] }
++                : { id: key, type: 'agentMessage', text: entry.text });
++        }
++        const last = turns.at(-1);
++        if (last && !this.outcomes.has(this.lastUser) && (state !== 'idle' || last.items.at(-1).type === 'userMessage')) last.status = 'inProgress';
++        return turns.slice(-40);
++    }
+     initialMessages() {
+         const entries = [...this.entries.values()];
+         const lastUser = entries.findLastIndex(entry => entry.role === 'user');
+--- /dev/null
++++ b/dist/claude/remote/launcher.js
+@@ -0,0 +1,63 @@
++import { execFile } from 'node:child_process';
++import { promisify } from 'node:util';
++import { mkdir, readFile, writeFile, realpath, stat } from 'node:fs/promises';
++import { homedir } from 'node:os';
++import path from 'node:path';
++import { localBindings } from './bindings.js';
++import { fail } from './client.js';
++
++const execute = promisify(execFile);
++const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
++const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
++
++// A normal interactive CLI owns each conversation, independently of the HTTP
++// bridge. A private tmux server keeps it available to native Remote Control.
++// Creation is explicitly enabled on this desktop; existing sessions are never
++// resumed, forked, or given a different model or permission configuration.
++export function createNativeSessionLauncher({ model, cli = process.env.PAGEBORNE_CLAUDE_CLI || 'claude',
++    stateDir = path.join(homedir(), '.pageborne', 'claude-sessions'),
++    defaultCwd = path.join(homedir(), '.pageborne', 'library'),
++    run = execute, bindings = localBindings, timeoutMs = 20000 } = {}) {
++    if (!model) return undefined;
++    const tasks = new Map();
++    async function prepare({ requestId, cwd = defaultCwd, title = 'Pageborne' }) {
++        if (!uuid(requestId) || typeof cwd !== 'string' || !path.isAbsolute(cwd) || /[\x00-\x1f]/.test(cwd) ||
++            typeof title !== 'string' || [...title].length > 300 || /[\x00-\x1f]/.test(title)) throw fail('Invalid Claude session request.', 400);
++        cwd = await realpath(cwd);
++        if (!(await stat(cwd)).isDirectory()) throw fail('Claude session directory is unavailable.', 400);
++        title = title.trim() || 'Pageborne';
++        await mkdir(stateDir, { recursive: true, mode: 0o700 });
++        const record = { sessionId: requestId, cwd, title, model };
++        const file = path.join(stateDir, `${requestId}.json`);
++        let fresh = false;
++        try { await writeFile(file, JSON.stringify(record), { flag: 'wx', mode: 0o600 }); fresh = true; }
++        catch (error) {
++            if (error.code !== 'EEXIST') throw error;
++            const saved = JSON.parse(await readFile(file, 'utf8'));
++            if (saved.cwd !== cwd || saved.title !== title || saved.model !== model) throw fail('This session request already belongs to another conversation.', 409);
++        }
++        const matching = () => bindings().filter(b => b.localId === requestId && b.cwd === cwd);
++        if (matching().length === 1) return record;
++        const name = `pb-${requestId}`;
++        const exists = async () => { try { await run('tmux', ['-L', 'pageborne-claude', 'has-session', '-t', name], { timeout: 5000 }); return true; } catch { return false; } };
++        if (!await exists()) {
++            if (!fresh) throw fail('The shared Claude session has closed. Start a new session in Ask, or reopen it on the desktop.', 409);
++            const args = [cli, '--model', model, '--permission-mode', 'default', '--remote-control', title, '--name', title, '--session-id', requestId];
++            try { await run('tmux', ['-L', 'pageborne-claude', 'new-session', '-d', '-s', name, '-c', cwd, `exec ${args.map(quote).join(' ')}`], { timeout: 10000 }); }
++            catch { throw fail('Could not start the shared Claude desktop session. Check the Claude CLI and tmux installation.', 503); }
++        }
++        const deadline = Date.now() + timeoutMs;
++        while (Date.now() < deadline) {
++            if (matching().length === 1) return record;
++            await new Promise(resolve => setTimeout(resolve, 200));
++        }
++        throw fail('Claude is waiting for desktop setup. Open its Pageborne session on the desktop, then retry; your question has not been sent.', 503);
++    }
++    return { model, prepare(input) {
++        // Serialise identical retries, including during connection loss. The
++        // durable reservation prevents another launch after a bridge restart.
++        const key = JSON.stringify(input);
++        if (!tasks.has(key)) tasks.set(key, prepare(input).finally(() => tasks.delete(key)));
++        return tasks.get(key);
++    } };
++}
