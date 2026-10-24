@@ -56,7 +56,7 @@ npm run build:debug
 npm run test:build-profiles  # Chromium; CHROME_PATH may override its executable
 npm run test:web            # Chromium and WebKit; WEBKIT_PATH may override WebKit
 # After committing a clean reviewed tree:
-npm run release:export -- /path/outside/repo/pageborn-source.tar.gz
+npm run release:export -- /path/outside/repo/pageborne-source.tar.gz
 ```
 
 The export contains the committed source for all build profiles, with no Git history, local config, pairing credentials, models, user documents or built debug packages. Existing development history is not included. The audit checks known private deployment markers and sensitive file types; it is not a general secret-detection guarantee.
