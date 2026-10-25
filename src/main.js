@@ -12,6 +12,7 @@ import { pdfAnchor, restorePdfAnchor, pdfPageTurn, PDF_WIDTH } from './pdf-layou
 import { pdfReadingViews, nearbyPdfNote } from './pdf-notes.js';
 import { pdfNativeWindow, pdfImageEnd, PdfAutoscroll, pdfEntryLines } from './pdf-native.js';
 import { openDocumentPicker, moveDocumentPicker, LIBRARIAN_ID } from './document-picker.js';
+import { librarySort, orderedDocuments } from './library-order.js';
 import { openPositionPicker, movePositionPicker, togglePositionStep } from './position-picker.js';
 import { Reader, autoSpeed, speedFromSlider, speedToSlider, stepAutoSpeed } from './reader.js';
 import { wordsPerMinute, wordsPerGroup, wordSpeedFromSlider, wordSpeedToSlider, stepWordSpeed, MIN_WORD_RATE, MAX_WORD_RATE } from './speed-reading.js';
@@ -167,7 +168,7 @@ askUI = new AskUI({
   diagnostics,
   snapshot: () => ({ document: active, bodyLayout: layout, notes: pdfNotes, layout: footnotesView?.layout || layout, y: footnotesView?.y ?? reader.y, title: active?.title, paperId: documentKey(), platform: WEB ? 'web' : 'glasses', wordFrame: reader.mode === 'speed' ? reader.speedReading.current : null }),
   pause: () => { useReadyPdfPages(); reader.pause(); picker = null; positionPicker = null; modePicker = null; previewMenu = null; }, changed: () => { dirty = true; },
-  returnToLibrary: () => { picker = openDocumentPicker(snapshot?.documents, active?.id, LIBRARIAN_ID); setLibraryOpen(true, false); dirty = true; renderControls(); },
+  returnToLibrary: () => { picker = openDocumentPicker(libraryDocuments(), active?.id, LIBRARIAN_ID); setLibraryOpen(true, false); dirty = true; renderControls(); },
   presentVoiceOverlay: () => { dirty = true; animate(performance.now(), true); if (!WEB) return glasses.queue?.whenIdle(); },
   automaticConnection: !!automaticTerminal || WEB,
   readConfig: readerConnection,
@@ -288,7 +289,7 @@ function handleAction(action, gesture = false) {
       if (reader.mode !== 'page') { askUI.handle('ask-toggle'); return; }
       const previousId = active.id;
       selectDocument(null);
-      picker = openDocumentPicker(snapshot?.documents, null, previousId);
+      picker = openDocumentPicker(libraryDocuments(), null, previousId);
       setLibraryOpen(true, false);
       dirty = true; return;
     }
@@ -310,7 +311,7 @@ function handleAction(action, gesture = false) {
   }
   if (action === 'documents') {
     reader.pause(); positionPicker = null;
-    picker = picker && active ? null : openDocumentPicker(snapshot?.documents, active?.id);
+    picker = picker && active ? null : openDocumentPicker(libraryDocuments(), active?.id);
     dirty = true; return;
   }
   if (picker && ['previous', 'next', 'play'].includes(action)) {
@@ -363,9 +364,10 @@ function updatePickerContext() {
   }
 }
 
+function libraryDocuments() { return orderedDocuments(snapshot?.documents, preferences); }
 function refreshDocumentPicker() {
   if (!picker && active) return;
-  picker = openDocumentPicker(snapshot?.documents, active?.id, picker?.items[picker.index]?.id);
+  picker = openDocumentPicker(libraryDocuments(), active?.id, picker?.items[picker.index]?.id);
   dirty = true; lastSentKey = '';
 }
 
@@ -395,6 +397,8 @@ function searchSnippet(text, query, radius = 40) {
     document.createTextNode(end < clean.length ? `${clean.slice(at + query.trim().length, end).replace(/[\s.,;:…]+$/, '')}…` : clean.slice(at + query.trim().length, end))];
 }
 function renderLibrary() {
+  $('library-sort').value = librarySort(preferences.librarySort);
+  $('library-sort').disabled = !libraryReady;
   $('library-librarian').disabled = !libraryReady;
   $('library-sync').disabled = libraryBusy || !libraryReady;
   renderSyncSummary();
@@ -403,12 +407,7 @@ function renderLibrary() {
   $('doc-count').textContent = String(snapshot?.documents.length || 0);
   if (!snapshot?.documents.length) return empty($('documents'), 'No documents yet.');
   const query = $('filter').value.toLocaleLowerCase().trim();
-  // Recently read documents come first; the rest keep their saved order.
-  const recent = preferences.recent || [];
-  const rank = id => { const i = recent.indexOf(id); return i < 0 ? Infinity : i; };
-  const docs = snapshot.documents.map((doc, order) => ({ doc, order }))
-    .filter(({ doc }) => `${doc.title} ${doc.id}`.toLocaleLowerCase().includes(query))
-    .sort((a, b) => rank(a.doc.id) - rank(b.doc.id) || a.order - b.order).map(({ doc }) => doc);
+  const docs = libraryDocuments().filter(doc => `${doc.title} ${doc.id}`.toLocaleLowerCase().includes(query));
   if (!docs.length) return empty($('documents'), `No documents match “${$('filter').value.trim()}”.`);
   for (const doc of docs) {
     const current = active?.id === doc.id;
@@ -634,7 +633,7 @@ function selectDocument(id, save = true) {
   } else {
     if (WEB) void webReading.setDocument(null);
     delete preferences.selected;
-    picker = openDocumentPicker(snapshot?.documents);
+    picker = openDocumentPicker(libraryDocuments());
     reader.setDocument(0); $('title').textContent = 'Choose something good.';
     $('doc-path').textContent = 'Select a document from your library.';
   }
@@ -1130,6 +1129,10 @@ $('file-picker').onchange = () => {
   if (libraryReady && !libraryBusy && files.length) imports.enqueue(files);
 };
 $('filter').oninput = renderLibrary;
+$('library-sort').onchange = () => {
+  preferences.librarySort = librarySort($('library-sort').value);
+  savePreferences(); renderLibrary(); refreshDocumentPicker();
+};
 $('previous').onclick = () => move(-1);
 $('next').onclick = () => move(1);
 $('play').onclick = () => { picker = null; handleAction('play'); };
