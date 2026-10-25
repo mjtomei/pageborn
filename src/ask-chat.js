@@ -132,6 +132,11 @@ export class AskChat {
     return this.turns(key).filter(t => t.state === 'complete' && t.question && t.answer).slice(-4)
       .flatMap(t => [{ role: 'user', content: t.question }, { role: 'assistant', content: t.answer }]);
   }
+  vocabularyHistory(key) {
+    return this.turns(key).slice(-12).flatMap(t => [
+      { role: 'user', content: t.question }, { role: 'assistant', content: t.answer },
+    ]).filter(message => message.content);
+  }
   forget(key) { this.cache.delete(key); const all = { ...this.read() }; delete all[key]; this.save(all); }
   clear() { this.cache.clear(); this.save({}); }
 }

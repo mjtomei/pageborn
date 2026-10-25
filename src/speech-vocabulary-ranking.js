@@ -1,5 +1,6 @@
 import buckets from '../vendor/wordfreq/en.json' with { type: 'json' };
 import { vocabularyWords } from './speech-vocabulary.js';
+import { filenamesInText, filenameVocabulary } from '@pageborne/browser-stt';
 
 // Keep the offline frequency table out of both speech workers. Build the
 // lookup only when dictation first needs it, not while opening a document.
@@ -29,10 +30,22 @@ function words(text) {
     .matchAll(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu)];
 }
 
+export function speechFilenames(custom, context = null, history = []) {
+  const names = filenamesInText(custom);
+  if (context) {
+    // Preserve complete recent replies, including a reply still arriving.
+    // A filename at the start of a long answer must not disappear at 800 chars.
+    for (const turn of history.slice(-24).reverse()) names.push(...filenamesInText(String(turn.content || '').slice(0, 16000)).reverse());
+    names.push(...filenamesInText(context.title), ...filenamesInText(context.focus));
+  }
+  return [...new Set(names)].slice(0, 24);
+}
+
 export function speechVocabulary(custom, context = null, history = []) {
   const manual = vocabularyWords(custom);
-  if (!context) return manual;
-  const seen = new Set(manual.map(normalize)), candidates = new Map();
+  const files = filenameVocabulary(speechFilenames(custom, context, history));
+  if (!context) return [...new Set([...manual, ...files])];
+  const seen = new Set([...manual, ...files].map(normalize)), candidates = new Map();
   const add = (term, distance, weight = 1) => {
     if (term.length < 3 || term.length > 40 || !/^\p{L}/u.test(term) || /(.)\1{3}/u.test(term)) return;
     const key = normalize(term);
@@ -59,5 +72,5 @@ export function speechVocabulary(custom, context = null, history = []) {
   });
   // No fixed automatic term count: Tiny can bias every eligible candidate;
   // Whisper packs these in priority order into its actual tokenizer budget.
-  return [...manual, ...[...candidates.values()].sort((a, b) => b.score - a.score).map(item => item.term)];
+  return [...new Set([...manual, ...files, ...[...candidates.values()].sort((a, b) => b.score - a.score).map(item => item.term)])];
 }

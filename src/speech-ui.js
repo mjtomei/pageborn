@@ -3,7 +3,7 @@ import { EnsembleSpeech, EnsembleStream } from '@pageborne/browser-stt';
 import { speechDeviceIdentity } from './speech-device.js';
 import { deferredSpeechStore } from './speech-storage.js';
 import { vocabularyWords } from './speech-vocabulary.js';
-import { speechVocabulary } from './speech-vocabulary-ranking.js';
+import { speechVocabulary, speechFilenames } from './speech-vocabulary-ranking.js';
 import { SpeechSetup, modelFileStatus, modelDownloadSummary } from './speech-setup.js';
 import { helpPopup } from './help-popups.js';
 
@@ -49,6 +49,7 @@ export class SpeechUI {
   stream(options) { return new EnsembleStream({ ...options, models: { entries: this.models.entries,
     prepare: (id, options) => this.models.prepare(id, options), transcribe: (id, audio, options) => this.transcribe(id, audio, options) } }); }
   vocabulary(context, history) { return vocabularyWords(speechVocabulary(this.readVocabulary(), this.readContextVocabulary() !== false ? context : null, history)); }
+  filenames(context, history) { return speechFilenames(this.readVocabulary(), this.readContextVocabulary() !== false ? context : null, history); }
   previewVocabulary() {
     const remote = this.backend === 'remote';
     const { context, history } = remote ? {} : this.vocabularyContext();

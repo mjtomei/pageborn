@@ -16,6 +16,8 @@ G2 supports native text, PDF reflow/figures, page reading, timed autoscroll and 
 
 Ask connects to a desktop session you configure; direct API connections are experimental. Optional extensions from the separate [even-terminal-patch](https://github.com/mjtomei/even-terminal-patch) repository add the shared library, conversation histories and passage links to a desktop Terminal server. Claude and Codex keep separate histories for each document. The standard G2 reader can import local Markdown, text and PDF files and read without a desktop connection.
 
+Dictation uses filenames from the active document's recent chat, including replies still arriving. For example, “todo dot txt” and “agents dot em dee” can become `todo.txt` and `AGENTS.md`. Known filenames supply exact case and separators; common suffixes also work without chat context. This runs locally and honors the context-vocabulary setting.
+
 ## Build
 
 Use Node **22.13+** and npm. No private server or credentials are needed to build.

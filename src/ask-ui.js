@@ -10,6 +10,7 @@ import { librarianContext } from './librarian.js';
 import { paperAttachments } from './ask-documents.js';
 import { renderSpeechConfidence, uncertainWords } from './speech-confidence.js';
 import { SpeechUI } from './speech-ui.js';
+import { formatSpokenFilenames } from '@pageborne/browser-stt';
 import { BrowserMicrophone } from './browser-microphone.js';
 import { AskKeyboard } from './ask-keyboard.js';
 import { ChatScrollbar } from './chat-scrollbar.js';
@@ -42,6 +43,7 @@ export class AskUI {
     this.stream = this.speech.stream({ backlog: () => { void this.release(); },
       result: result => {
         if (!this.session.active || !this.session.review?.completing && !['starting', 'listening'].includes(this.session.status)) return;
+        result = formatSpokenFilenames(result, this.dictationFilenames);
         const text = result.text;
         if (text && this.voiceTiming?.generation === this.generation && !this.voiceTiming.firstWord) {
           const now = performance.now(); this.voiceTiming.firstWord = true;
@@ -287,11 +289,11 @@ export class AskUI {
     }
   }
   vocabularyContext() {
-    if (this.librarian) return { context: librarianContext(), history: this.chat.history(this.paperKey) };
+    if (this.librarian) return { context: librarianContext(), history: this.chat.vocabularyHistory(this.paperKey) };
     const { layout, y, title, wordFrame, paperId } = this.snapshot();
     if (!layout) return {};
     const key = this.session.active && this.paperId === paperId ? this.paperKey : paperConnectionKey(this.configFor(paperId), paperId);
-    return { context: askContext(layout, y, title, wordFrame, 1000), history: this.chat.history(key) };
+    return { context: askContext(layout, y, title, wordFrame, 1000), history: this.chat.vocabularyHistory(key) };
   }
   async hold(source = this.options().evenHost ? 'glasses' : 'phone') {
     const started = performance.now();
@@ -311,7 +313,8 @@ export class AskUI {
       if (this.speech.backend === 'remote') checkTranscription(this.config, this.options());
       this.session.voiceDraft = ''; this.draftConfidence = null; $('ask-question').value = '';
       this.dictationVocabulary = [];
-      if (this.speech.backend !== 'remote') this.stream.start(this.dictationVocabulary);
+      this.dictationFilenames = [];
+      if (this.speech.backend !== 'remote') this.stream.start(this.dictationVocabulary, { filenames: this.dictationFilenames });
       this.activeMic = source === 'phone' ? this.phoneMic : this.mic;
       this.captureRequested = false;
       this.session.setStatus('starting');
@@ -324,6 +327,7 @@ export class AskUI {
         try {
           this.speech.open();
           const { context, history } = this.vocabularyContext();
+          this.dictationFilenames.push(...this.speech.filenames(context, history));
           const terms = this.speech.vocabulary(context, history);
           // Keep the stream's shared vocabulary array: audio may already be arriving.
           this.dictationVocabulary.push(...terms);
@@ -357,10 +361,11 @@ export class AskUI {
       const audio = await this.activeMic.stop();
       if (generation !== this.generation) return;
       if ((audio.kind === 'pcm-stream' ? audio.bytes : audio.size - 44) < 3200) { this.emptyDictation(); return; }
-      const response = backend === 'remote'
+      const rawResponse = backend === 'remote'
         ? await transcribeQuestion(this.config, audio, this.transcription.signal, this.options())
         : await this.stream.finish(audio, { signal: this.transcription.signal });
       if (generation !== this.generation) return;
+      const response = formatSpokenFilenames(rawResponse, this.dictationFilenames);
       if (backend !== 'remote') this.speech.result(response);
       const question = String(response.text || '').trim();
       if (!question) { this.emptyDictation(); return; }
