@@ -2,7 +2,7 @@ import { bytesToBase64 } from './binary.js';
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_PDF_BYTES = 16 * 1024 * 1024;
-export const MAX_LIBRARY_BYTES = 32 * 1024 * 1024;
+export const MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
 export const MAX_DOCUMENTS = 1000;
 const encoder = new TextEncoder();
 export function countWords(text) {
@@ -61,7 +61,7 @@ export function addDocument(saved, document) {
   const snapshot = localSnapshot(saved);
   if (snapshot.documents.length >= MAX_DOCUMENTS) throw new Error('Library limit reached (1,000 files). Delete a file first.');
   if (snapshot.documents.reduce((sum, doc) => sum + doc.bytes, 0) + document.bytes > MAX_LIBRARY_BYTES) {
-    throw new Error('Library exceeds 32 MiB. Delete some files first.');
+    throw new Error(`Library exceeds ${MAX_LIBRARY_BYTES / 1024 / 1024} MiB. Delete some files first.`);
   }
   const used = new Set(snapshot.documents.map(doc => doc.id));
   const dot = document.id.lastIndexOf('.');

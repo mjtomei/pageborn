@@ -49,6 +49,7 @@ try {
         if(url.pathname==='/api/info')return json({provider:'codex'});
         if(url.pathname==='/api/events')return route.fulfill({headers,contentType:'text/event-stream',body:': connected\n\n'});
         if(url.pathname.endsWith('/history'))return json({history:[]});
+        if(url.pathname==='/api/pageborne/reader-state')return route.fulfill({status:404,headers,json:{}});
         if(url.pathname==='/api/messages')return json({state,messages});
         if(url.pathname==='/api/prompt'){prompts.push(req.postDataJSON());state='busy';messages.push({id:messages.length+1,type:'user_prompt',text:req.postDataJSON().text});return json({sessionId:'unread-fixture'});}
         throw Error(`Unexpected route ${url.pathname}`);

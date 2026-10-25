@@ -9,7 +9,7 @@ import { showLibrary } from './ui-helpers.mjs';
 
 process.env.PAGEBORNE_ASK_ORIGINS = 'https://followups.test';
 const out = 'test-results/ask-followups'; await mkdir(out, { recursive: true });
-const vite = await createServer({ plugins: [displayProbe()], cacheDir: '.state/vite-ask-followups', server: { host: '127.0.0.1', port: 0, hmr: false }, clearScreen: false });
+const vite = await createServer({ plugins: [displayProbe()], cacheDir: '.state/vite-ask-followups', server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false });
 await vite.listen(); const reports = [];
 try {
   for (const engine of [chromium, webkit]) {
@@ -33,6 +33,8 @@ try {
         };
         window.flutter_inappwebview = { async callHandler(_, payload) {
           const m = JSON.parse(payload); if (m.method.endsWith('LocalStorage')) return window.__storage(m);
+          const texts = m.method === 'textContainerUpgrade' ? [m.data] : m.data?.textObject || [];
+          for (const text of texts) if (text.containerName === 'body') window.__body = text.content;
           return ['createStartUpPageContainer', 'updateImageRawData'].includes(m.method) ? 0 : true;
         } };
       });
@@ -68,6 +70,7 @@ try {
       const send = async text => { await page.locator('#ask-question').fill(text); await expect(page.locator('#ask-send')).toBeEnabled(); await page.locator('#ask-send').click(); };
       const state = () => page.evaluate(() => window.__askUI.session.status);
       const turns = () => page.evaluate(() => window.__askUI.chat.turns(window.__askUI.paperKey));
+      const glassesBody = () => page.evaluate(() => window.__body);
       const finish = (index, text) => {
         const p = prompts[index], s = sessions.get(p.sessionId), turn = s.turns.find(t => t.marker === p.marker);
         turn.answer = text; turn.state = 'complete';
@@ -89,10 +92,15 @@ try {
       finish(0, '');
       const s = sessions.get(prompts[1].sessionId); s.turns[1].answer = 'Answer in progress';
       await expect(page.locator('#ask-answer')).toHaveText('Answer in progress');
+      await page.evaluate(() => window.__askUI.open({ showConversation: true }));
       await send('Third question'); await expect.poll(() => prompts.length).toBe(3);
-      finish(1, 'Second answer complete'); s.turns[2].answer = 'Third answer partial';
+      await expect.poll(glassesBody).toContain('Third question');
+      finish(1, 'Second answer complete. '.repeat(100));
       await expect(page.locator('#ask-messages')).toContainText('Second answer complete');
+      await expect.poll(glassesBody).toContain('Third question');
+      s.turns[2].answer = 'Third answer partial';
       await expect(page.locator('#ask-answer')).toHaveText('Third answer partial');
+      await expect.poll(glassesBody).toContain('Third answer partial');
       assert.equal((await turns()).find(t => t.question === 'First question').state, 'complete');
       // Actual hold/release/review lifecycle with a deterministic speech result.
       await page.evaluate(() => {
@@ -111,6 +119,12 @@ try {
       await expect.poll(state).toBe('review'); await expect(page.locator('#ask-question')).toHaveValue('Spoken follow-up');
       await page.locator('#ask-send').click(); await expect.poll(() => prompts.length).toBe(4);
       assert.equal(prompts[3].question, 'Spoken follow-up');
+      await expect.poll(glassesBody).toContain('Spoken follow-up');
+      // A newly discovered old answer must not consume follow mode or jump
+      // away from the question currently waiting for an answer on the glasses.
+      s.turns.unshift({ id: 'historical-answer', question: '', answer: 'Historical answer. '.repeat(100), state: 'complete' });
+      await expect(page.locator('#ask-messages')).toContainText('Historical answer');
+      await expect.poll(glassesBody).toContain('Spoken follow-up');
       // A rejected follow-up retains the earlier pending question for recovery.
       rejectNext = true; await send('Rejected follow-up'); await expect.poll(state).toBe('error');
       finish(3, 'Spoken answer');
@@ -151,7 +165,7 @@ try {
       await expect(page.locator('#ask-messages')).toContainText('Claude first answer'); await expect(page.locator('#ask-answer')).toHaveText('Claude spoken answer');
       await expect(page.locator('#ask-messages')).not.toContainText('Codex two');
       assert.deepEqual(report.errors, []);
-      Object.assign(report, { passed: true, prompts: prompts.length, oneSession: true, busyFollowups: true, voiceDuringReply: true, rejectedFollowupRecovered: true, modelSwitch: true, reload: true });
+      Object.assign(report, { passed: true, prompts: prompts.length, oneSession: true, busyFollowups: true, voiceDuringReply: true, rejectedFollowupRecovered: true, modelSwitch: true, reload: true, glassesFollowupPosition: true, glassesHistoryBackfillPosition: true });
       await page.screenshot({ path: `${out}/${engine.name()}.png`, fullPage: true });
     } catch (e) { report.failure = e.stack; console.error(await page.evaluate(() => ({ status: window.__askUI?.session.status, error: window.__askUI?.session.error, turns: window.__askUI?.chat.turns(window.__askUI.paperKey) }))); await page.screenshot({ path: `${out}/${engine.name()}-failure.png` }); throw e; }
     finally { await browser.close(); }

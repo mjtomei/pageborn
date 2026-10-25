@@ -8,7 +8,7 @@ import { libraryManifest, libraryUploadStatus, libraryUploadChunk, libraryCommit
 import { paperFilesStatus, paperFileChunk, commitPaperFiles } from '../integrations/even-terminal/pageborne-files.js';
 import { workspaceCapabilities } from '../integrations/even-terminal/pageborne-workspaces.js';
 import { PhoneLibrary } from '../src/phone-storage.js';
-import { readLocalFile, MAX_LIBRARY_BYTES } from '../src/library.js';
+import { readLocalFile, MAX_LIBRARY_BYTES, MAX_PDF_BYTES } from '../src/library.js';
 import { syncLibrary, documentDescriptor, documentBytes, uploadLibraryFile, planLibrarySync } from '../src/library-sync.js';
 import { paperAttachments, syncPaperFiles } from '../src/ask-documents.js';
 import { nativeLayout } from '../src/native-text.js';
@@ -62,6 +62,19 @@ test('one-sided edits transfer in either direction and preserve the phone readin
   await f.store.put(await document('paper.md', 'Phone edit'), f.store.snapshot.documents[0]);
   assert.equal((await f.sync()).uploaded, 1);
   assert.equal(await readFile(path.join(f.libraryDir, 'paper.md'), 'utf8'), 'Phone edit');
+});
+
+test('a 40 MiB library syncs and reopens intact above the old 32 MiB cap', async t => {
+  const f = await fixture(t), bytes = Buffer.alloc(10 * 1024 * 1024, 32);
+  bytes.write('%PDF-fixture\n');
+  for (let i = 0; i < 4; i++) await writeFile(path.join(f.libraryDir, `${i}.pdf`), bytes);
+  assert.equal((await f.sync()).downloaded, 4);
+  const reopened = new PhoneLibrary(f.kv), saved = await reopened.read();
+  assert.equal(saved.documents.reduce((n, doc) => n + doc.bytes, 0), 40 * 1024 * 1024);
+  for (const doc of saved.documents) assert.equal((await documentDescriptor(doc)).sha256, hash(bytes));
+  const reads = f.calls.filter(call => call.route.endsWith('/read')).length;
+  assert.equal((await f.sync({ store: reopened, snapshot: saved })).downloaded, 0);
+  assert.equal(f.calls.filter(call => call.route.endsWith('/read')).length, reads);
 });
 
 test('both-side edits keep deterministic copies, including interrupted conflict recovery', async t => {
@@ -155,9 +168,10 @@ test('new library identity does not inherit old deletions; final phone size is c
   assert.equal(await readFile(path.join(f.libraryDir, 'paper.md'), 'utf8'), 'Phone');
   const client = { serverInfo: f.client.serverInfo, async api(route) {
     assert.equal(route, 'pageborne/library');
-    return { version: 1, id: 'large', directory: '/fixture', files: Array.from({ length: 3 }, (_, i) => ({ name: `${i}.pdf`, bytes: MAX_LIBRARY_BYTES / 2, sha256: hash(String(i)) })) };
+    return { version: 1, id: 'large', directory: '/fixture', files: Array.from({ length: Math.floor(MAX_LIBRARY_BYTES / MAX_PDF_BYTES) + 1 }, (_, i) => ({ name: `${i}.pdf`, bytes: MAX_PDF_BYTES, sha256: hash(String(i)) })) };
   } };
-  await assert.rejects(f.sync({ client }), /exceed the phone limit/);
+  await assert.rejects(f.sync({ client }), error => error.code === 'library-capacity'
+    && /phone limit is 64 MiB/.test(error.message) && error.totalBytes > MAX_LIBRARY_BYTES);
   assert.equal(f.store.snapshot.documents.length, 1);
 });
 

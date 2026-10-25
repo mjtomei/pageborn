@@ -89,7 +89,10 @@ export async function syncLibrary({ client, snapshot, store, saved = {}, saveSta
     if (action.kind === 'remove-phone') finalFiles.delete(action.name);
     if (action.kind === 'conflict') { finalFiles.set(action.copy, action.file); finalFiles.set(action.name, action.remote); }
   }
-  if (finalFiles.size > MAX_DOCUMENTS || [...finalFiles.values()].reduce((sum, f) => sum + f.bytes, 0) > MAX_LIBRARY_BYTES) throw new Error('The synced library would exceed the phone limit (1,000 files / 32 MiB). No files were changed.');
+  const totalBytes = [...finalFiles.values()].reduce((sum, f) => sum + f.bytes, 0);
+  if (finalFiles.size > MAX_DOCUMENTS || totalBytes > MAX_LIBRARY_BYTES) throw Object.assign(new Error(
+    `The synced library needs ${(totalBytes / 1024 / 1024).toFixed(1)} MiB for ${finalFiles.size} files. The phone limit is ${MAX_LIBRARY_BYTES / 1024 / 1024} MiB / ${MAX_DOCUMENTS.toLocaleString('en-US')} files. No files were changed.`),
+  { code: 'library-capacity', totalBytes, files: finalFiles.size });
   let current = snapshot; const hashes = { ...baseline };
   const counts = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0 };
   const persist = async () => saveState({ id: remote.id, directory: remote.directory, files: { ...hashes }, at: Date.now() });

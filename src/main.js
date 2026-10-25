@@ -991,7 +991,12 @@ async function startLibrarySync() {
   } catch (error) {
     const message = controller.signal.aborted ? 'Sync cancelled. Completed files are saved; sync again to continue.'
       : error.status === 409 ? 'A file changed during sync. Sync again to preserve both copies.' : storageMessage(error);
-    syncProgress(message, controller.signal.aborted ? 'Sync cancelled' : 'Sync failed; see phone');
+    if (!controller.signal.aborted) diagnostics.error('library-sync-error', new Error('Library sync failed.'), {
+      failure: error.code === 'library-capacity' ? 'capacity' : error.connectionFailure || (error.status ? 'http' : 'other'),
+      status: error.status,
+      ...(error.code === 'library-capacity' ? { bytes: error.totalBytes, files: error.files } : {}),
+    });
+    syncProgress(message, controller.signal.aborted ? 'Sync cancelled' : error.code === 'library-capacity' ? 'Library full; see phone' : 'Sync failed; see phone');
   } finally {
     librarySync = null; $('library-sync-cancel').hidden = true; setLibraryBusy(false); refreshDocumentPicker(); renderSyncSummary();
   }

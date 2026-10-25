@@ -14,13 +14,18 @@ const out = `test-results/library-sync-${useWebkit ? 'webkit' : 'chromium'}`; aw
 const libraryDir = await mkdtemp(path.join(tmpdir(), 'pageborne-sync-browser-'));
 const app = express(), sessions = new Map(), prompts = []; let session = 0, manifestCalls = 0, blockRead = false, releaseRead, holdReply = false, finishReply;
 const attachments = new Map(); let expectedOriginal = '# Desktop revised\n\nUpdated shared text.';
+let manifestFixture = null;
 app.use((req, res, next) => {
   res.set({ 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   if (req.get('authorization') !== 'Bearer fixture-token') return res.sendStatus(401); next();
 });
 app.use(express.json({ limit: '10mb' }));
-app.use('/api/pageborne/library', (_req, _res, next) => { manifestCalls++; next(); });
+app.use('/api/pageborne/library', (req, res, next) => {
+  manifestCalls++;
+  if (manifestFixture && req.method === 'GET' && req.path === '/') return res.json(manifestFixture);
+  next();
+});
 app.use('/api/pageborne/library/read', async (_req, _res, next) => { if (blockRead) { blockRead = false; await new Promise(resolve => releaseRead = resolve); } next(); });
 const router = express.Router(); installPaperWorkspaces(router, { libraryDir, baseDir: path.join(libraryDir, 'legacy'), defaultBase: path.join(libraryDir, 'sessions') }); app.use('/api', router);
 app.get('/api/info', (_req, res) => res.json({ provider: 'codex', pageborne: workspaceCapabilities() }));
@@ -49,7 +54,7 @@ app.post('/api/prompt', async (req, res) => {
 });
 const api = app.listen(0, '127.0.0.1'); await new Promise(resolve => api.once('listening', resolve));
 const endpoint = `http://127.0.0.1:${api.address().port}`; process.env.PAGEBORNE_ASK_ORIGINS = endpoint;
-const vite = await createServer({ cacheDir: `.state/vite-sync-${useWebkit ? 'webkit' : 'chrome'}`, server: { host: '127.0.0.1', port: 0 }, clearScreen: false }); await vite.listen();
+const vite = await createServer({ cacheDir: `.state/vite-sync-${useWebkit ? 'webkit' : 'chrome'}`, server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false }); await vite.listen();
 const browser = await (useWebkit ? webkit : chromium).launch({ executablePath: useWebkit ? process.env.WEBKIT_PATH : '/usr/bin/google-chrome', headless: true });
 const result = { passed: false, errors: [], physicalGlasses: false, actualAgents: false }; let page;
 try {
@@ -95,6 +100,19 @@ try {
   assert.equal(await readFile(path.join(libraryDir, 'phone.txt'), 'utf8'), 'Uploaded from phone.');
   await expect.poll(() => page.evaluate(() => window.__status)).toMatch(/Library synced\s+Tap to open · Hold to sync/);
   result.glassesHold = true;
+  manifestFixture = { version: 1, id: 'capacity-fixture', directory: '/fixture', files: Array.from({ length: 5 }, (_, i) => ({
+    name: `${i}.pdf`, bytes: 16 * 1024 * 1024, sha256: 'a'.repeat(64),
+  })) };
+  const beforeCapacity = manifestCalls;
+  await page.locator('#library-sync').click();
+  await expect(page.locator('#library-sync-status')).toContainText('phone limit is 64 MiB');
+  await expect.poll(() => page.evaluate(() => window.__status)).toContain('Library full; see phone');
+  assert.equal(manifestCalls - beforeCapacity, 1, 'capacity failure must not transfer or delete files');
+  await expect(page.locator('#doc-count')).toHaveText('3');
+  manifestFixture = null;
+  await page.locator('#library-sync').click();
+  await expect(page.locator('#library-sync-status')).toContainText('Synced ');
+  result.capacityFailureKeepsLibrary = true;
   await page.screenshot({ path: path.join(out, 'synced-phone.png') });
   await writeFile(path.join(libraryDir, 'desktop.md'), '# Desktop revised\n\nUpdated shared text.');
   await page.locator('#library-sync').click(); await expect(page.locator('#library-sync-status')).toContainText('Synced ');

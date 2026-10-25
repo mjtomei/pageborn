@@ -137,6 +137,37 @@ test('an open Ask view stops at the new reply beginning as partial and completed
   }
 });
 
+test('history backfill cannot steal focus from a newly sent question', () => {
+  const turns = [{ id: 'recent', question: 'Previous question', answer: 'Already seen explanation. '.repeat(120) }];
+  const c = new AskConversation(); let view = c.update(turns, 0, 'latest');
+  turns.push({ id: 'new', question: 'My new question', answer: '' });
+  view = c.update(turns, view.y);
+  assert.match(c.window(view.y).content, /My new question/);
+  // A server history snapshot includes an older reply absent from the cache.
+  turns.unshift({ id: 'older', question: 'Historical question', answer: 'Historical explanation. '.repeat(150) });
+  view = c.update(turns, view.y);
+  assert.match(c.window(view.y).content, /My new question/, 'keep following the submitted question');
+  assert(c.following, 'backfill must not consume the first-reply focus');
+  turns.at(-1).answer = 'New reply begins. '.repeat(80);
+  view = c.update(turns, view.y);
+  assert.deepEqual(c.anchor(view.y), { key: 'new:assistant', row: 0 });
+});
+
+test('a prior pending answer cannot pull the viewer away from a follow-up', () => {
+  const turns = [
+    { id: 'old', question: 'Old question', answer: 'Old answer. '.repeat(100) },
+    { id: 'prior', question: 'Still working on this', answer: '' },
+    { id: 'followup', question: 'Follow-up question', answer: '' },
+  ];
+  const c = new AskConversation(); let view = c.update(turns, 0, 'latest');
+  turns[1].answer = 'Delayed earlier answer. '.repeat(100);
+  view = c.update(turns, view.y);
+  assert.match(c.window(view.y).content, /Follow-up question/);
+  turns[2].answer = 'Follow-up reply. '.repeat(100);
+  view = c.update(turns, view.y);
+  assert.deepEqual(c.anchor(view.y), { key: 'followup:assistant', row: 0 });
+});
+
 test('manual paging during a streamed reply holds the chosen page, including its temporary end', async () => {
   const turn = { id: 'stream', question: 'Question', answer: '' };
   const session = new AskSession(() => {

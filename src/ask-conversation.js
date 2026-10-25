@@ -43,7 +43,10 @@ export class AskConversation {
     // Follow the submitted question only until its reply arrives. A short
     // reply can retain earlier messages above it, but streaming must never
     // move past the beginning of that reply. Explicit navigation wins.
-    const reply = !focus && this.following && messages.findLast(message => message.role === 'assistant' && !this.cache.has(message.key));
+    // History backfill and delayed earlier answers are new to the cache too.
+    // Only the newest turn's reply can stop following the submitted question.
+    const reply = !focus && this.following && messages.findLast(message => message.role === 'assistant'
+      && message.turnId === turns.at(-1)?.id && !this.cache.has(message.key));
     if (focus || this.following) this.replyStart = null;
     if (reply) { this.replyStart = reply.key; this.following = false; }
     if (messages.length !== this.messages.length || messages.some((m, i) => m !== this.messages[i])) {
