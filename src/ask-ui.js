@@ -931,6 +931,7 @@ export class AskUI {
       // messages. Reorder existing nodes as well as inserting missing nodes.
       list.append(message);
       const body = message.querySelector('.ask-message-text');
+      if (role === 'activity') message.dataset.lines = String(entry.lines || 1);
       let actions = message.querySelector('.ask-message-actions');
       if (actions && actions.dataset.location !== JSON.stringify([turn.position, turn.page])) {
         const next = this.answerActions(turn); actions.replaceWith(next); actions = next;

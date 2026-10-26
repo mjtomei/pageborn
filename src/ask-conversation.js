@@ -8,16 +8,22 @@ export const MESSAGE_WIDTH = RIGHT_EDGE - 64;
 const alignQuestion = text => text.trim() ? ' '.repeat(Math.max(0,
   Math.floor((RIGHT_EDGE - getTextWidth(text)) / getTextWidth(' ')))) + text : '';
 
-function activityRows(text) {
-  let line = text.replace(/\s+/g, ' ').trim();
-  if (measureNativeText(line) > MESSAGE_WIDTH) {
-    const chars = Array.from(line.replace(/(?:…|\.{3})$/, ''));
-    while (chars.length && measureNativeText(chars.join('').trimEnd() + '…') > MESSAGE_WIDTH) chars.pop();
-    line = chars.join('').trimEnd() + '…';
-  }
+function activityRows(text, lines = 1) {
+  const line = text.replace(/\s+/g, ' ').trim();
   // Tool summaries are literal text. Parsing shell syntax as Markdown can
   // strip filenames, angle brackets or underscores from a command.
-  return nativeLayout({ blocks: [{ index: 0, text: line, kind: 'activity', sourceLine: 1 }] }, 0, { width: MESSAGE_WIDTH }).rows;
+  const rows = nativeLayout({ blocks: [{ index: 0, text: line, kind: 'activity', sourceLine: 1 }] }, 0, { width: MESSAGE_WIDTH }).rows;
+  if (rows.length <= lines) return rows;
+  const kept = rows.slice(0, lines), last = kept.at(-1);
+  const chars = Array.from(line.slice(last.offset).replace(/(?:…|\.{3})$/, ''));
+  let low = 0, high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (measureNativeText(chars.slice(0, mid).join('') + '…') <= MESSAGE_WIDTH) low = mid;
+    else high = mid - 1;
+  }
+  last.text = chars.slice(0, low).join('').trimEnd() + '…';
+  return kept;
 }
 
 // Display history is independent of the shorter context sent to providers.
@@ -33,8 +39,8 @@ export class AskConversation {
       if (!text) continue;
       const key = `${turn.id}:${entry.key}`;
       const previous = this.cache.get(key);
-      const message = previous?.text === text ? previous : {
-        key, role, text, rows: (role === 'activity' ? activityRows(text) : nativeLayout(parseDocument(text), 0, { width: MESSAGE_WIDTH }).rows)
+      const message = previous?.text === text && previous.lines === entry.lines ? previous : {
+        key, role, text, lines: entry.lines, rows: (role === 'activity' ? activityRows(text, entry.lines) : nativeLayout(parseDocument(text), 0, { width: MESSAGE_WIDTH }).rows)
           .map(row => ({ ...row, text: role === 'user' ? alignQuestion(row.text) : row.text })),
       };
       if (message !== previous) {

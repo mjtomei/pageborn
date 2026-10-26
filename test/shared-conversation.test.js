@@ -137,3 +137,14 @@ test('conversation endpoint exposes only text for the requested provider/session
   let result; await handler({ query: { provider: 'codex', sessionId: 's' } }, { json(value) { result = value; } });
   assert.deepEqual(requested, ['codex', 's']); assert.equal(result.turns.length, 30); assert(!JSON.stringify(result).includes('must not appear'));
 });
+
+test('history accepts optional command detail and keeps compatibility with summary-only desktops', async () => {
+  let action = { id: 'cmd', kind: 'tool', text: 'Shell short…', state: 'complete' };
+  const client = new EvenTerminal({ mode: 'terminal', endpoint: 'https://example.test', token: 'fixture', agent: 'codex' }, { fetcher: async url => Response.json(
+    url.includes('/info?') ? { pageborne: { conversationSync: 1 } } : { version: 1, sessionId: 's', turns: [{ id: 't', question: 'Question', answer: 'Answer', state: 'complete', activities: [action] }] }) });
+  assert.equal((await client.conversation({ sessionId: 's' })).turns[0].activities[0].detail, undefined);
+  action = { ...action, detail: 'Shell node scripts/check.mjs --include-annotations' };
+  assert.equal((await client.conversation({ sessionId: 's' })).turns[0].activities[0].detail, action.detail);
+  action.detail = {}; await assert.rejects(client.conversation({ sessionId: 's' }), /invalid activity/);
+  action.detail = 'x'.repeat(1001); await assert.rejects(client.conversation({ sessionId: 's' }), /invalid activity/);
+});

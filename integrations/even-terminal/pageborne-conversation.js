@@ -28,6 +28,8 @@ export function conversationTurns(snapshot) {
         if (current && typeof item.id === 'string' && ['tool', 'thinking', 'status'].includes(item.kind) && typeof item.text === 'string') {
           (current.activities ||= []).push({ id: item.id.slice(0, 300), kind: item.kind,
             text: item.text.trim().slice(0, item.kind === 'thinking' ? 800 : 200),
+            ...(item.kind === 'tool' && typeof item.detail === 'string' && item.detail.trim()
+              ? { detail: item.detail.trim().slice(0, 1000) } : {}),
             state: turn.status !== 'inProgress' && item.state === 'pending' ? 'complete'
               : ['pending', 'complete', 'error'].includes(item.state) ? item.state : 'complete' });
         }
@@ -52,8 +54,8 @@ export function conversationTurns(snapshot) {
     const entry = { ...value, question: value.question.slice(0, 64000), answer: value.answer.slice(0, 16000) };
     if (entry.activities) {
       let size = 0;
-      entry.activities = entry.activities.slice(-24).reverse().filter(a => { size += a.text.length; return a.text && size <= 4000; }).reverse();
-      characters += entry.activities.reduce((n, a) => n + a.text.length, 0);
+      entry.activities = entry.activities.slice(-24).reverse().filter(a => { size += a.text.length + (a.detail?.length || 0); return a.text && size <= 4000; }).reverse();
+      characters += entry.activities.reduce((n, a) => n + a.text.length + (a.detail?.length || 0), 0);
     }
     characters += entry.question.length + entry.answer.length;
     if (characters > 100000) break;

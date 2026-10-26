@@ -112,8 +112,11 @@ export class AskChat {
         const activities = new Map((turn.activities || []).map(a => [a.id, a]));
         for (const next of boundedActivities(remote.activities)) {
           const old = activities.get(next.id);
-          if (old && old.state !== 'pending' && next.state === 'pending') continue;
-          activities.set(next.id, next);
+          if (old && old.state !== 'pending' && next.state === 'pending') {
+            if (next.detail && !old.detail) activities.set(next.id, { ...old, detail: next.detail });
+            continue;
+          }
+          activities.set(next.id, { ...next, ...(!next.detail && old?.detail ? { detail: old.detail } : {}) });
         }
         turn.activities = boundedActivities([...activities.values()]);
       }

@@ -19,7 +19,7 @@ try {
     const turns = Array.from({ length: 12 }, (_, n) => ({ id: `remote-${n}`, question: `Mobile question ${n}?`, answer: `Mobile answer ${n}.`, state: 'complete' }));
     turns[11].activities = [
       { id: 'think', kind: 'thinking', text: 'Checking the relevant file.', state: 'complete' },
-      { id: 'read', kind: 'tool', text: 'Read agents.md and inspect the implementation with a lengthy command…', state: 'complete' },
+      { id: 'read', kind: 'tool', text: 'Shell node scripts/inspect.mjs…', detail: 'Shell node scripts/inspect.mjs --input documents/notes.md --format markdown --include-annotations --verbose Shell node scripts/inspect.mjs --input documents/notes.md --format markdown --include-annotations --verbose Shell node scripts/inspect.mjs --input documents/notes.md --format markdown --include-annotations --verbose Shell node scripts/inspect.mjs --input documents/notes.md --format markdown --include-annotations --verbose ', state: 'complete' },
     ];
     let offline = false, delayed;
     try {
@@ -84,17 +84,19 @@ try {
       await expect(page.locator('.ask-message-activity')).toHaveCount(1);
       await expect(page.locator('#ask-messages')).not.toContainText('Checking the relevant file.');
       const activityRows = await page.evaluate(() => window.__askUI.session.conversation.messages.filter(m => m.role === 'activity').flatMap(m => m.rows.map(r => r.text)));
-      assert.equal(activityRows.length, 1); assert(activityRows[0].endsWith('…'));
+      assert.equal(activityRows.length, 2); assert(activityRows[1].endsWith('…'));
+      assert(!activityRows[0].endsWith('…')); assert(activityRows.join(' ').includes('--format'));
+      assert((await page.evaluate(() => window.__nativeBoxes.activity.content)).trim().split('\n').length === 2);
       const phoneAction = await page.locator('.ask-message-activity .ask-message-text').evaluate(el => ({
-        height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight),
+        height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight), clamp: getComputedStyle(el).webkitLineClamp,
         overflow: getComputedStyle(el).textOverflow, width: el.clientWidth, contentWidth: el.scrollWidth }));
-      assert(phoneAction.height <= phoneAction.line + 1); assert.equal(phoneAction.overflow, 'ellipsis');
-      assert(phoneAction.contentWidth > phoneAction.width);
+      assert(Math.abs(phoneAction.height - phoneAction.line * 2) <= 1); assert.equal(phoneAction.clamp, '2');
       await expect.poll(() => page.evaluate(() => window.__nativeBoxes.activity?.textColor)).toBe(1);
       assert.equal(await page.evaluate(() => window.__nativeBoxes.body.textColor), 4);
-      assert.match(await page.evaluate(() => window.__nativeBoxes.activity.content), /Read agents.md/);
+      assert.match(await page.evaluate(() => window.__nativeBoxes.activity.content), /Shell node scripts/);
       assert.notEqual(await page.locator('.ask-message-activity').first().evaluate(el => getComputedStyle(el).color),
         await page.locator('.ask-message-assistant').first().evaluate(el => getComputedStyle(el).color));
+      await page.screenshot({ path: `${out}/${engine.name()}-activity.png`, fullPage: true });
       await expect.poll(() => page.evaluate(() => window.__nativeMenu?.[1]?.itemName)).toBe('Go to latest');
       await page.evaluate(() => window.__askUI.returnToReading()); await expect.poll(body).toBe(reading);
       await expect.poll(() => page.evaluate(() => window.__nativeMenu?.[1]?.itemName)).toBe('Go to position');

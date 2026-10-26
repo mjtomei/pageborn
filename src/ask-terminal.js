@@ -62,6 +62,7 @@ export class EvenTerminal {
     // Optional extension; old bridges still return ordinary text history.
     for (const turn of result.turns) if (turn.activities != null && (!Array.isArray(turn.activities) || turn.activities.length > 24
       || turn.activities.some(a => !a || typeof a.id !== 'string' || typeof a.text !== 'string'
+        || (a.detail != null && (typeof a.detail !== 'string' || a.detail.length > 1000))
         || !['tool', 'thinking', 'status'].includes(a.kind) || !['pending', 'complete', 'error'].includes(a.state))))
       throw Object.assign(new Error('The desktop returned invalid activity.'), { connectionFailure: 'invalid-response' });
     return result;

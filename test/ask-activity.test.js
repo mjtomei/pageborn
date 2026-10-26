@@ -103,3 +103,42 @@ test('native actions fit exactly one line including ellipsis and preserve litera
     }
   }
 });
+
+test('long command detail survives restart and older snapshots without changing replies or receipts', () => {
+  let saved = {};
+  const chat = new AskChat(() => saved, data => { saved = structuredClone(data); });
+  const remote = { id: 'r', question: 'Question', answer: 'Answer', state: 'complete', activities: [activity('command', 'Shell short…', 'complete')] };
+  chat.mergeConversation('p', 's', [remote], { baseline: true });
+  chat.turns('p')[0].readThrough = 3;
+  const detail = 'Shell node scripts/check.mjs --input documents/a-long-filename.md --format markdown --include-notes';
+  const result = chat.mergeConversation('p', 's', [{ ...remote, activities: [{ ...remote.activities[0], state: 'pending', detail }] }]);
+  assert.equal(result.reply, undefined); assert.equal(chat.turns('p')[0].readThrough, 3);
+  assert.equal(chat.turns('p')[0].activities[0].state, 'complete');
+  chat.mergeConversation('p', 's', [remote]);
+  const restored = new AskChat(() => saved, () => {}), turn = restored.turns('p')[0];
+  assert.equal(turn.activities[0].detail, detail);
+  assert.deepEqual(restored.history('p').map(m => m.content), ['Question', 'Answer']);
+  const message = chatMessages(turn).find(m => m.role === 'activity');
+  assert.equal(message.text, 'Tool: ' + detail); assert.equal(message.lines, 2);
+  const values = Array.from({ length: 24 }, (_, i) => ({ ...activity(String(i)), detail: 'x'.repeat(2000) }));
+  assert(boundedActivities(values).reduce((n, a) => n + a.text.length + (a.detail?.length || 0), 0) <= 4000);
+});
+
+test('long native command details fill up to two lines with ellipsis inside the final line', () => {
+  const view = new AskConversation();
+  for (const detail of ['Shell echo <file> && cat __x__',
+    'Shell node scripts/check-document.mjs --include-annotations --input a-long-filename.md',
+    'Bash ' + 'W'.repeat(130), 'Shell ' + 'i'.repeat(400), 'Read ' + '文😀'.repeat(100)]) {
+    view.update([{ id: 'one', question: 'Question', answer: 'Answer', state: 'complete',
+      activities: [{ ...activity('command', 'Old short summary…'), detail }] }], 0, 'latest');
+    const message = view.messages.find(m => m.role === 'activity'), rows = message.rows;
+    assert(rows.length >= 1 && rows.length <= 2);
+    for (const row of rows) { assert(measureNativeText(row.text) <= MESSAGE_WIDTH); assert(byteLength(row.text) < TEXT_BYTES); }
+    if (measureNativeText(message.text) <= MESSAGE_WIDTH) assert.equal(rows[0].text, message.text);
+    else assert.equal(rows.length, 2);
+    if (measureNativeText(message.text) > MESSAGE_WIDTH * 2) {
+      assert(rows[1].text.endsWith('…')); assert(!rows[0].text.endsWith('…'));
+      assert(measureNativeText(rows[1].text) > MESSAGE_WIDTH * 0.85);
+    }
+  }
+});
