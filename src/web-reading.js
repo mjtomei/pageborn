@@ -136,22 +136,18 @@ export class WebReading {
       }
     } else {
       const article = document.createElement('article'); article.className = 'web-prose'; this.scroller.append(article);
-      if (/\.txt$/i.test(doc.id)) {
-        for (const block of layout.blocks) { const el = document.createElement('p'); el.textContent = block.text; article.append(el); this.targets.push({ el, y: layout.blockY[block.index] || 0 }); }
-      } else {
-        let line = 1;
-        const tokens = Lexer.lex(doc.content.replace(/\r\n?/g, '\n'), { gfm: true });
-        for (const token of tokens) {
-          if (token.type !== 'space') {
-            const el = document.createElement('div'); el.className = 'web-markdown-block';
-            const list = [token]; list.links = tokens.links;
-            el.append(safeMarkdown(Parser.parse(list)));
-            article.append(el);
-            const block = layout.blocks.find(b => b.sourceLine >= line) || layout.blocks.at(-1);
-            this.targets.push({ el, y: layout.blockY[block?.index] || 0 });
-          }
-          line += (token.raw.match(/\n/g) || []).length;
+      let line = 1;
+      const tokens = Lexer.lex(doc.content.replace(/\r\n?/g, '\n'), { gfm: true });
+      for (const token of tokens) {
+        if (token.type !== 'space') {
+          const el = document.createElement('div'); el.className = 'web-markdown-block';
+          const list = [token]; list.links = tokens.links;
+          el.append(safeMarkdown(Parser.parse(list)));
+          article.append(el);
+          const block = layout.blocks.find(b => b.sourceLine >= line) || layout.blocks.at(-1);
+          this.targets.push({ el, y: layout.blockY[block?.index] || 0 });
         }
+        line += (token.raw.match(/\n/g) || []).length;
       }
     }
     if (this.pdf) this.renderPdfPages();

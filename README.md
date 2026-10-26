@@ -14,6 +14,8 @@ A reader for Even G2 glasses.
 
 G2 supports native text, PDF reflow/figures, page reading, timed autoscroll and speed reading.
 
+Markdown and `.txt` files use the same formatting on glasses and the web reader: single newlines within prose flow together, while blank lines separate paragraphs. Headings, lists and fenced code blocks follow Markdown formatting. The stored original stays unchanged.
+
 Ask connects to a desktop session you configure; direct API connections are experimental. Optional extensions from the separate [even-terminal-patch](https://github.com/mjtomei/even-terminal-patch) repository add the shared library, conversation histories and passage links to a desktop Terminal server. Claude and Codex keep separate histories for each document. The standard G2 reader can import local Markdown, text and PDF files and read without a desktop connection.
 
 With even-terminal-patch 0.2.1 or later, shared chats also show dimmed tool actions and the thinking summaries made available by the provider. Recent activity is retained across devices and reloads, separately from answers; it does not create unread-reply notifications. Activity is bounded to 24 entries and 4,000 characters per question. Older or redacted thinking that the provider does not supply cannot be recovered.

@@ -522,7 +522,7 @@ drawerQuery.addEventListener('change', () => setLibraryOpen(!active, false));
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('value-dialog').open && !$('debug-dialog')?.open && drawerQuery.matches && $('library-panel').dataset.open === 'true') { event.preventDefault(); setLibraryOpen(false); }
 });
-function buildLayout() { layout = nativeLayout(parseDocument(active.content, /\.txt$/i.test(active.id)), 0); }
+function buildLayout() { layout = nativeLayout(parseDocument(active.content), 0); }
 function selectDocument(id, save = true) {
   previewInput?.cancel(); previewMenu = null;
   askUI?.close();
