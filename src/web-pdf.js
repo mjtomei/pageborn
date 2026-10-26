@@ -1,17 +1,9 @@
 import { getDocument, PDFWorker } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?worker&inline';
-import resources from 'virtual:pdf-resources';
+import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
 import { base64ToBytes } from './binary.js';
 import { readPdfText } from './pdf-text.js';
 import { renderPdfPage } from './pdf-render.js';
-
-class LocalResources {
-  async fetch({ kind, filename }) {
-    const data = resources[`${kind}/${filename}`];
-    if (!data) throw new Error(`Missing PDF resource: ${filename}`);
-    return base64ToBytes(data);
-  }
-}
 
 // Original pages for browser reading. No OCR, column splitting, or glasses
 // reflow. Pixels exist only for the pages currently near the viewport.
@@ -24,8 +16,9 @@ export class WebPdf {
       this.port.addEventListener('messageerror', () => reject(new Error('Could not read the PDF worker response.')));
     });
     this.worker = new PDFWorker({ port: this.port });
+    this.decoderFallbacks = new PdfDecoderFallbacks();
     this.task = getDocument({ data: base64ToBytes(content), worker: this.worker,
-      BinaryDataFactory: LocalResources, useWorkerFetch: false, isEvalSupported: false,
+      BinaryDataFactory: LocalPdfResources, wasmUrl: this.decoderFallbacks.wasmUrl, useWorkerFetch: false, isEvalSupported: false,
       enableXfa: false, cMapPacked: true, canvasMaxAreaInBytes: 16_000_000 });
     this.task.onPassword = () => { this.passwordError?.(new Error('Remove the PDF password before opening it.')); };
     this.pdf = await Promise.race([this.task.promise, workerFailure, new Promise((_, reject) => { this.passwordError = reject; })]);
@@ -70,5 +63,6 @@ export class WebPdf {
     await Promise.allSettled([...this.tasks.values()].map(task => task.promise));
     await this.task?.destroy().catch(() => {});
     this.port?.terminate();
+    this.decoderFallbacks?.destroy();
   }
 }

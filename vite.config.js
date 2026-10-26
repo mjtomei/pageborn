@@ -20,7 +20,11 @@ function pdfResources() {
       for (const [folder, kind] of Object.entries(folders)) for (const filename of readdirSync(path.join(root, folder))) {
         if (/\.(?:bcmap|ttf|pfb|wasm)$/.test(filename) && !filename.startsWith('quickjs')) assets[`${kind}/${filename}`] = readFileSync(path.join(root, folder, filename)).toString('base64');
       }
-      return `export default ${JSON.stringify(assets)}`;
+      const fallbacks = Object.fromEntries(['openjpeg', 'jbig2'].map(name => {
+        const filename = `${name}_nowasm_fallback.js`;
+        return [filename, readFileSync(path.join(root, 'wasm', filename), 'utf8')];
+      }));
+      return `export const decoderFallbacks = ${JSON.stringify(fallbacks)}; export default ${JSON.stringify(assets)}`;
     },
     generateBundle() {
       for (const file of readdirSync('vendor/licenses/liberation')) this.emitFile({ type: 'asset', fileName: `licenses/pdfjs/liberation/${file}`, source: readFileSync(`vendor/licenses/liberation/${file}`) });

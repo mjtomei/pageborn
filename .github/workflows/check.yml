@@ -25,3 +25,4 @@ jobs:
         run: |
           export CHROME_PATH="$(node --input-type=module -e 'import { chromium } from "@playwright/test"; process.stdout.write(chromium.executablePath())')"
           npm run test:build-profiles
+          npm run test:pdf-decoders

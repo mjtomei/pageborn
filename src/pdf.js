@@ -1,6 +1,6 @@
 import { getDocument, PDFWorker, Util, OPS, version as pdfjsVersion } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?worker&inline';
-import resources from 'virtual:pdf-resources';
+import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -20,13 +20,6 @@ import { pdfPreparationKey, packPdfPreparation, unpackPdfPreparation } from './p
 import { pdfImageFrame } from './pdf-image-frame.js';
 import { associatePdfCaptions, reunitePdfFigureFragments, protectPdfCaptionedExhibits } from './pdf-captions.js';
 
-class LocalPdfResources {
-  async fetch({ kind, filename }) {
-    const encoded = resources[`${kind}/${filename}`];
-    if (!encoded) throw new Error(`This PDF needs an unavailable font or decoder (${filename}).`);
-    return base64ToBytes(encoded);
-  }
-}
 function textBoxes(content, viewport) {
   return content.items.filter(item => item.str?.trim()).map(item => {
     const m = Util.transform(viewport.transform, item.transform);
@@ -114,7 +107,9 @@ export class PdfDocument {
     this.port.addEventListener('messageerror', () => this.report('pdf-worker-error', new Error('Could not decode a PDF worker message.'), { stage: 'worker-message' }));
     this.worker = new PDFWorker({ port: this.port });
     this.checkpoint('loading-document', { bytes: data.length });
+    this.decoderFallbacks = new PdfDecoderFallbacks();
     this.task = getDocument({ data, worker: this.worker, BinaryDataFactory: LocalPdfResources,
+      wasmUrl: this.decoderFallbacks.wasmUrl,
       useWorkerFetch: false, isEvalSupported: false, enableXfa: false, stopAtErrors: true, cMapPacked: true,
       // Let PDF.js downsample large scans to the canvas budget. maxImageSize
       // rejects them outright, dropping 600dpi article pages from the layout.
@@ -525,6 +520,7 @@ export class PdfDocument {
     this.raster?.destroy();
     this.closing = Promise.allSettled([this.ocr?.destroy(), this.task?.destroy()]).finally(() => {
       this.worker?.destroy(); this.port?.terminate(); this.layout = null;
+      this.decoderFallbacks?.destroy();
       this.marginMasks.clear(); this.pageScales.clear(); this.pageTurns.clear();
     });
     return this.closing;

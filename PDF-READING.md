@@ -125,3 +125,9 @@ Korean support is outside the supported/tested scope; local OCR remains English 
 Twenty additional PDFs cover 420 source pages and 4,550 paging screens. Imports, saved-preparation reopening, navigation, native width and byte checks passed. Sampled flow sheets, image blocks and original pages were also inspected; this was not a manual reading of every page. The PDF engine was unchanged from 0.7.21 during this review.
 
 The visual review found remaining problems: missing spaces in Arrow's embedded text, a false abstract column split in Besley's scan, mixed columns in Norenzayan and annotated WaveScalar passages, and some cover artifacts, fragmented figures and missed footnotes. These are documented, not fixed by the note-navigation release. See the local [20-PDF results and source comparisons](test-results/pdf-corpus-next20-0.7.21/REVIEW.md). No private source PDFs or extracted text are bundled in the app.
+
+## Scan decoder compatibility
+
+JPEG 2000 and JBIG2/CCITT decoders are bundled with the reader, including their JavaScript fallbacks. Older WebKit versions lack the relaxed SIMD instructions used by PDF.js's OpenJPEG WebAssembly decoder. The fallback keeps those scans visible on the glasses and in the web reader, including offline. Decoder modules remain available during page-cache cleanup and are released when the document closes.
+
+`npm run test:pdf-decoders` checks original JPEG 2000 test imagery in both readers, offline rendering, forced WebAssembly failure, and decoder cleanup. Set `PDF_DECODER_BROWSERS=chromium,webkit` and optionally `WEBKIT_PATH` to include WebKit. No library documents are included in the fixtures.

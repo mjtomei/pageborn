@@ -2,8 +2,8 @@
 // third-party PDFs or user documents are needed for the regression suite.
 import { deflateSync } from 'node:zlib';
 
-export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [] } = {}) {
-  const compressed = deflateSync(pixels);
+export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [], jpeg2000 = false } = {}) {
+  const compressed = jpeg2000 ? pixels : deflateSync(pixels);
   const stream = `q 600 0 0 800 0 0 cm /Scan Do Q\n` + textLayer.map(({ text, x, y, size = 24 }) =>
     `BT 3 Tr /F1 ${size} Tf 1 0 0 1 ${x} ${800 - y} Tm (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`).join('\n');
   const objects = [
@@ -11,7 +11,7 @@ export function scannedPdfFixture(width, height, pixels, { bilevel = false, text
     '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /XObject << /Scan 5 0 R >> /Font << /F1 6 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-    Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /${bilevel ? 'DeviceGray' : 'DeviceRGB'} /BitsPerComponent ${bilevel ? 1 : 8} /Filter /FlateDecode /Length ${compressed.length} >>\nstream\n`), compressed, Buffer.from('\nendstream')]),
+    Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ${jpeg2000 ? '/Filter /JPXDecode' : `/ColorSpace /${bilevel ? 'DeviceGray' : 'DeviceRGB'} /BitsPerComponent ${bilevel ? 1 : 8} /Filter /FlateDecode`} /Length ${compressed.length} >>\nstream\n`), compressed, Buffer.from('\nendstream')]),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ];
   const parts = [Buffer.from('%PDF-1.7\n')]; const offsets = []; let length = parts[0].length;
