@@ -1,4 +1,5 @@
 import { MAX_QUESTION_CHARS } from './ask-limits.js';
+import { boundedActivities } from './ask-activity.js';
 // Phone conversation history is separate from the short follow-up context sent
 // to an API. Store recent turns, not the (potentially very large) source passage.
 const MAX_TURNS = 40, MAX_CHARACTERS = 100000, MAX_PAPERS = 20;
@@ -14,7 +15,8 @@ function bounded(turns) {
   for (const turn of (Array.isArray(turns) ? turns : []).slice(-MAX_TURNS).reverse()) {
     if (!turn || typeof turn.id !== 'string') continue;
     const value = { ...turn, question: String(turn.question || '').slice(0, MAX_QUESTION_CHARS), answer: String(turn.answer || '').slice(0, 16000) };
-    size += value.question.length + value.answer.length;
+    if (value.activities) value.activities = boundedActivities(value.activities);
+    size += value.question.length + value.answer.length + (value.activities || []).reduce((n, a) => n + a.text.length, 0);
     if (size > MAX_CHARACTERS) break;
     kept.unshift(value);
   }
@@ -104,6 +106,17 @@ export class AskChat {
         || baseline && !fresh && /^(shared:|reply:)/.test(turn.id));
       if (historical) { delete turn.readThrough; historicalIds.push(turn.id); }
       if (localResult && remote.answer !== oldAnswer) turn.remoteResultOnly = true;
+      // Merge by stable activity ID. Older servers/snapshots may omit activity
+      // already seen; they must not erase it or regress a completed operation.
+      if (remote.activities) {
+        const activities = new Map((turn.activities || []).map(a => [a.id, a]));
+        for (const next of boundedActivities(remote.activities)) {
+          const old = activities.get(next.id);
+          if (old && old.state !== 'pending' && next.state === 'pending') continue;
+          activities.set(next.id, next);
+        }
+        turn.activities = boundedActivities([...activities.values()]);
+      }
       Object.assign(turn, { remoteSession: sessionId, remoteId: remote.id, remoteAliases: [...new Set([...(turn.remoteAliases || []), ...identities])],
         ...(remote.marker ? { marker: remote.marker } : {}), question: remote.question, answer, state });
       if (!historical && state === 'complete' && answer && (fresh || oldState !== 'complete')) {

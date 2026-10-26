@@ -32,6 +32,7 @@ export function paintFrame(ctx, frame) {
   if (frame.bitmap && !frame.picker && !frame.positionPicker) ctx.drawImage(frame.bitmap, 0, BODY_TOP);
   else bodyText(frame).split('\n').slice(0, geometry?.bodyLines).forEach((line, index) => {
     const role = frame.message?.alignments?.[index], right = role === 'user';
+    ctx.fillStyle = role === 'activity' ? '#aaa' : '#fff';
     ctx.textAlign = right ? 'right' : 'left';
     ctx.fillText(right ? line.trimStart() : line, right ? WIDTH - MARGIN - 8 : MARGIN, BODY_TOP + index * LINE_HEIGHT, role ? MESSAGE_WIDTH : WIDTH - 2 * MARGIN - 8);
   });
@@ -249,14 +250,27 @@ export function gray4(data) {
   for (let i = 0; i < result.length; i++) result[i] = (Math.round(data[i * 8] / 17) << 4) | Math.round(data[i * 8 + 4] / 17);
   return result;
 }
+export function bodyTextObjects(content) {
+  const body = content.body ?? 'Opening your saved library…';
+  const lines = body.split('\n'), roles = content.alignments || [];
+  const dimmed = lines.some((line, i) => line.trim() && roles[i] === 'activity');
+  const box = (containerID, containerName, text, textColor) => ({
+    xPosition: MARGIN, yPosition: BODY_TOP, width: WIDTH - 2 * MARGIN, height: BODY_HEIGHT,
+    containerID, containerName, content: text || ' ', textColor, isEventCapture: 0, paddingLength: 0, borderWidth: 0,
+  });
+  // Whole blank lines preserve vertical positions without variable-width
+  // space masks. Two layers suffice regardless of the number of activities.
+  return [box(1, 'body', dimmed ? lines.map((line, i) => roles[i] === 'activity' ? '' : line).join('\n') : body, 4),
+    ...(dimmed ? [box(23, 'activity', lines.map((line, i) => roles[i] === 'activity' ? line : '').join('\n'), SECONDARY_TEXT_COLOR)] : [])];
+}
+
 export function pageDefinition(mode = 'page', content = {}) {
   const textObject = [
     // A blank capture surface receives gestures in both modes. The visible
     // body never rubberbands or scrolls independently of the reading position.
     { xPosition: MARGIN, yPosition: BODY_TOP, width: WIDTH - 2 * MARGIN, height: BODY_HEIGHT,
       containerID: 4, containerName: 'page-input', content: ' ', isEventCapture: 1, paddingLength: 0, borderWidth: 0 },
-    { xPosition: MARGIN, yPosition: BODY_TOP, width: WIDTH - 2 * MARGIN, height: BODY_HEIGHT, containerID: 1,
-      containerName: 'body', content: content.body ?? 'Opening your saved library…', isEventCapture: 0, paddingLength: 0, borderWidth: 0 },
+    ...bodyTextObjects(content),
     ...(content.footer || footerTextObjects({ message: { status: content.status ?? 'Native text' } })),
   ];
   textObject.forEach((box, i) => { box.zOrderIndex = i; });
@@ -265,11 +279,10 @@ export function pageDefinition(mode = 'page', content = {}) {
 
 export function modePageDefinition(content, index, pdf = false) {
   const page = pdf ? pdfPageDefinition(BODY_HEIGHT, content) : pageDefinition('page', content), p = MODE_POPUP;
-  const body = page.textObject.find(box => box.containerName === 'body');
-  if (body) {
+  for (const body of page.textObject.filter(box => ['body', 'activity'].includes(box.containerName))) {
     // Blank only the popup's columns in the existing body. This preserves
     // three individually positioned menu items plus both footer colors.
-    const lines = content.body.split('\n'), firstRow = p.y / LINE_HEIGHT, coveredRows = p.height / LINE_HEIGHT;
+    const lines = body.content.split('\n'), firstRow = p.y / LINE_HEIGHT, coveredRows = p.height / LINE_HEIGHT;
     const x = p.x + p.width + 8;
     for (let i = 0; i < coveredRows; i++) {
       const row = firstRow + i;
@@ -282,6 +295,10 @@ export function modePageDefinition(content, index, pdf = false) {
   }
   page.textObject.push({ containerID: 19, containerName: 'mode-picker', xPosition: p.x, yPosition: p.y, width: p.width, height: p.height,
     content: ' ', isEventCapture: 0, borderWidth: 1, borderColor: 10, borderRadius: 4, paddingLength: 0 });
+  if (page.textObject.some(box => box.containerName === 'activity')) {
+    page.textObject = page.textObject.filter(box => box.containerName !== 'page-input');
+    page.textObject.find(box => box.containerName === 'mode-picker').isEventCapture = 1;
+  }
   modePopupText(index).split('\n').forEach((line, i) => page.textObject.push({ containerID: 20 + i, containerName: `mode-option-${i}`,
     xPosition: p.x + p.padding, yPosition: p.y + p.padding + i * p.rowHeight, width: p.width - 2 * p.padding, height: LINE_HEIGHT,
     content: line, isEventCapture: 0, paddingLength: 0, borderWidth: 0 }));
@@ -290,14 +307,14 @@ export function modePageDefinition(content, index, pdf = false) {
   return page;
 }
 
-function reviewTextObjects(dialog) {
+function reviewTextObjects(dialog, limit = 4) {
   const geometry = transcriptionGeometry(dialog);
   const box = (id, name, x, y, width, height, content, borderWidth = 0, paddingLength = 0) => ({
     containerID: id, containerName: name, xPosition: x, yPosition: y, width, height,
     content, borderWidth, borderColor: 10, borderRadius: 4, paddingLength, isEventCapture: 0,
   });
   const hint = dialog.hint;
-  const { runs } = nativeTranscriptRuns(dialog.text, dialog.dimmed ? [] : dialog.uncertain);
+  const { runs } = nativeTranscriptRuns(dialog.text, dialog.dimmed ? [] : dialog.uncertain, limit);
   return [{ ...box(5, 'review-panel', 12, geometry.top, 552, geometry.height, ' ', 1), isEventCapture: 1 },
     ...runs.map((run, index) => ({ ...box(index ? 15 + index : 7, index ? `review-run-${index}` : 'review-text',
       24 + run.x, geometry.top + 8 + run.y, run.width, run.height, run.content),
@@ -310,12 +327,13 @@ export function reviewPageDefinition(content, dialog, pdf = false) {
   const page = pdf ? pdfPageDefinition(geometry.top, content) : pageDefinition('page', content);
   // The blank panel also captures input, freeing a container for word colors.
   page.textObject = page.textObject.filter(box => !['page-input', 'commands'].includes(box.containerName));
-  const body = page.textObject.find(box => box.containerName === 'body');
-  if (body) { body.height = geometry.top; body.content = body.content.split('\n').slice(0, geometry.bodyLines).join('\n') || ' '; }
+  for (const body of page.textObject.filter(box => ['body', 'activity'].includes(box.containerName))) {
+    body.height = geometry.top; body.content = body.content.split('\n').slice(0, geometry.bodyLines).join('\n') || ' ';
+  }
   Object.assign(page.textObject.find(box => box.containerName === 'status'), { content: dialog.statusRight
     ? ' '.repeat(Math.max(0, Math.floor((528 - getTextWidth(content.status)) / getTextWidth(' ')))) + content.status
     : content.status, xPosition: 24, yPosition: geometry.controlsTop, width: geometry.statusWidth, textColor: 4 });
-  page.textObject.push(...reviewTextObjects(dialog));
+  page.textObject.push(...reviewTextObjects(dialog, page.textObject.some(box => box.containerName === 'activity') ? 3 : 4));
   page.textObject.forEach((box, i) => { box.zOrderIndex = i ? (page.imageObject?.length || 0) + i : 0; });
   page.containerTotalNum = page.textObject.length + (page.imageObject?.length || 0);
   return page;
@@ -345,7 +363,7 @@ export class GlassesDisplay {
     this.ready = false; this.queue?.stop(); this.onStatus('Connecting native text…');
     this.bridge = await waitForEvenAppBridge();
     const mode = this.lastFrame?.mode || 'page';
-    const content = this.lastFrame && !this.lastFrame.bitmap ? { body: bodyText(this.lastFrame), status: statusText(this.lastFrame), footer: footerTextObjects(this.lastFrame) }
+    const content = this.lastFrame && !this.lastFrame.bitmap ? { body: bodyText(this.lastFrame), alignments: this.lastFrame.message?.alignments, status: statusText(this.lastFrame), footer: footerTextObjects(this.lastFrame) }
       : { body: this.lastFrame?.bitmap ? 'Opening PDF…' : 'Opening your saved library…', status: 'Loading' };
     content.askMenu = this.lastFrame?.askMenu ?? this.lastFrame?.message?.kind === 'ask';
     await this.lane.run('setup', async () => {
@@ -395,20 +413,21 @@ export class GlassesDisplay {
     const pdf = !!frame.bitmap && !frame.picker && !frame.positionPicker;
     const window = frame.nativePdf || (pdf ? { start: rowAt(frame.layout, frame.y), end: rowAt(frame.layout, frame.y + BODY_HEIGHT) } : textWindow(frame.layout, frame.y));
     const askMenu = frame.askMenu ?? frame.message?.kind === 'ask';
-    const content = { body: pdf ? '' : bodyText(frame), status: statusText(frame), footer: footerTextObjects(frame), askMenu };
+    const content = { body: pdf ? '' : bodyText(frame), alignments: frame.message?.alignments, status: statusText(frame), footer: footerTextObjects(frame), askMenu };
     if (this.suspended || !this.ready) return;
     const dialog = frameDialog(frame);
     const reading = !!frame.layout && !dialog && !frame.message && !frame.picker && !frame.positionPicker && !frame.modePicker && !frame.footnotes;
     if (!reading) this.readingFrame = null;
     const reviewTop = dialog ? transcriptionGeometry(dialog).top : null;
-    const surface = dialog ? `review-${pdf ? 'pdf' : 'text'}` : frame.modePicker ? `mode-${pdf ? 'pdf' : 'text'}` : pdf ? 'pdf' : 'text';
+    const activity = !pdf && bodyTextObjects(content).length > 1;
+    const surface = (dialog ? `review-${pdf ? 'pdf' : 'text'}` : frame.modePicker ? `mode-${pdf ? 'pdf' : 'text'}` : pdf ? 'pdf' : 'text') + (activity ? '-activity' : '');
     const reviewPage = dialog && reviewPageDefinition(content, dialog, pdf);
     const reviewControls = reviewPage ? JSON.stringify(reviewPage.textObject.map(box =>
       [box.containerName, box.xPosition, box.yPosition, box.width, box.height])) : null;
     const overlayPage = reviewPage || (frame.modePicker && modePageDefinition(content, frame.modePicker.index, pdf));
     const rebuild = surface !== this.surface || askMenu !== this.askMenu || !!dialog && (reviewTop !== this.reviewTop || reviewControls !== this.reviewControls);
     const updates = overlayPage ? overlayPage.textObject.filter(box => !['page-input', 'review-panel'].includes(box.containerName))
-      : [...(pdf ? [] : [{ containerName: 'body', containerID: 1, content: content.body, textColor: 4 }]), ...content.footer];
+      : [...(pdf ? [] : bodyTextObjects(content)), ...content.footer];
     if (this.diagnostics.enabled) {
       this.diagnostics.display = { screen: frame.message?.kind || 'reader', surface, accepted: false,
         rebuild,

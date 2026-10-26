@@ -6,6 +6,7 @@ import origins from 'virtual:ask-origins';
 import { terminalPairing } from './terminal-pairing.js';
 import { readQrImage, QrImageError } from './qr-image.js';
 import { AskChat } from './ask-chat.js';
+import { chatMessages } from './ask-activity.js';
 import { librarianContext } from './librarian.js';
 import { paperAttachments } from './ask-documents.js';
 import { renderSpeechConfidence, uncertainWords } from './speech-confidence.js';
@@ -915,13 +916,14 @@ export class AskUI {
     this.renderedChatKey = this.paperKey; this.renderedChat = signature;
     const keep = new Set();
     $('ask-answer')?.removeAttribute('id');
-    for (const [i, turn] of turns.entries()) for (const role of ['user', 'assistant']) {
+    for (const [i, turn] of turns.entries()) for (const entry of chatMessages(turn)) {
+      const { role, text } = entry;
       if (role === 'user' && !turn.question) continue;
-      const key = `${turn.id}:${role}`; keep.add(key);
+      const key = `${turn.id}:${entry.key}`; keep.add(key);
       let message = [...list.children].find(el => el.dataset.key === key);
       if (!message) {
         message = document.createElement('article'); message.dataset.key = key; message.className = `ask-message ask-message-${role}`;
-        const label = document.createElement('p'); label.className = 'ask-speaker'; label.textContent = role === 'user' ? 'You' : 'Assistant';
+        const label = document.createElement('p'); label.className = 'ask-speaker'; label.textContent = role === 'user' ? 'You' : role === 'activity' ? 'Activity' : 'Assistant';
         const body = document.createElement('div'); body.className = 'ask-message-text'; message.append(label, body); list.append(message);
         if (role === 'assistant') message.append(this.answerActions(turn));
       }
@@ -934,7 +936,6 @@ export class AskUI {
         const next = this.answerActions(turn); actions.replaceWith(next); actions = next;
       }
       if (actions) actions.hidden = turn.state !== 'complete' || !turn.answer;
-      const text = role === 'user' ? turn.question : turn.answer;
       if (body.textContent !== text) body.textContent = text;
       message.hidden = role === 'assistant' && !text;
       if (role === 'assistant' && i === turns.length - 1) { body.id = 'ask-answer'; body.setAttribute('aria-busy', String(this.session.status === 'thinking')); }

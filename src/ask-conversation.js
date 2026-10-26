@@ -1,6 +1,7 @@
 import { getTextWidth } from '@evenrealities/pretext';
 import { nativeLayout, LINE_HEIGHT, VISIBLE_LINES, byteLength, TEXT_BYTES } from './native-text.js';
 import { parseDocument, rowAt, WIDTH, MARGIN } from './document.js';
+import { chatMessages } from './ask-activity.js';
 
 const RIGHT_EDGE = WIDTH - 2 * MARGIN - 8;
 export const MESSAGE_WIDTH = RIGHT_EDGE - 64;
@@ -15,10 +16,10 @@ export class AskConversation {
   update(turns, y, focus, lines = this.lines) {
     const anchor = this.anchor(y);
     const messages = [];
-    for (const turn of turns) for (const role of ['user', 'assistant']) {
-      const text = role === 'user' ? turn.question : turn.answer;
+    for (const turn of turns) for (const entry of chatMessages(turn)) {
+      const { role, text } = entry;
       if (!text) continue;
-      const key = `${turn.id}:${role}`;
+      const key = `${turn.id}:${entry.key}`;
       const previous = this.cache.get(key);
       const message = previous?.text === text ? previous : {
         key, role, text, rows: nativeLayout(parseDocument(text), 0, { width: MESSAGE_WIDTH }).rows

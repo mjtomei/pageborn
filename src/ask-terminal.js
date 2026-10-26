@@ -59,6 +59,11 @@ export class EvenTerminal {
       new Set(result.turns.map(t => t.id)).size !== result.turns.length) {
       throw Object.assign(new Error('The desktop returned an invalid conversation.'), { connectionFailure: 'invalid-response' });
     }
+    // Optional extension; old bridges still return ordinary text history.
+    for (const turn of result.turns) if (turn.activities != null && (!Array.isArray(turn.activities) || turn.activities.length > 24
+      || turn.activities.some(a => !a || typeof a.id !== 'string' || typeof a.text !== 'string'
+        || !['tool', 'thinking', 'status'].includes(a.kind) || !['pending', 'complete', 'error'].includes(a.state))))
+      throw Object.assign(new Error('The desktop returned invalid activity.'), { connectionFailure: 'invalid-response' });
     return result;
   }
   async nativeClaude(signal) {

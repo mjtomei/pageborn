@@ -17,6 +17,10 @@ try {
     page.on('pageerror', error => result.errors.push(error.message));
     const storage = new Map(), requests = [];
     const turns = Array.from({ length: 12 }, (_, n) => ({ id: `remote-${n}`, question: `Mobile question ${n}?`, answer: `Mobile answer ${n}.`, state: 'complete' }));
+    turns[11].activities = [
+      { id: 'think', kind: 'thinking', text: 'Checking the relevant file.', state: 'complete' },
+      { id: 'read', kind: 'tool', text: 'Read agents.md', state: 'complete' },
+    ];
     let offline = false, delayed;
     try {
       await page.exposeFunction('__storage', ({ method, data }) => {
@@ -31,10 +35,14 @@ try {
           postMessage(data) { if (data.operation === 'prepare') queueMicrotask(() => this.onmessage?.({ data: { id: data.id, result: { backend: 'wasm', verified: true } } })); }
           terminate() {}
         };
-        window.__body = '';
+        window.__body = ''; window.__nativeBoxes = {};
         window.flutter_inappwebview = { async callHandler(_, payload) {
           const m = JSON.parse(payload); if (m.data?.menuObject) window.__nativeMenu = m.data.menuObject.menuItems; if (m.method.endsWith('LocalStorage')) return window.__storage(m);
-          for (const t of m.method === 'textContainerUpgrade' ? [m.data] : m.data?.textObject || []) if (t.containerName === 'body') window.__body = t.content;
+          if (m.data?.textObject) window.__nativeBoxes = {};
+          for (const t of m.method === 'textContainerUpgrade' ? [m.data] : m.data?.textObject || []) {
+            window.__nativeBoxes[t.containerName] = t;
+            if (t.containerName === 'body') window.__body = t.content;
+          }
           return ['createStartUpPageContainer', 'updateImageRawData'].includes(m.method) ? 0 : true;
         } };
       });
@@ -73,6 +81,12 @@ try {
       assert.notEqual(await page.evaluate(() => window.__askUI.footerStatus()), 'Unread reply');
       await page.evaluate(() => window.__askUI.open()); await stopped();
       await expect.poll(body).toContain('Mobile answer 11.'); assert(!(await body()).includes('Mobile question 0?'));
+      await expect(page.locator('.ask-message-activity')).toHaveCount(2);
+      await expect.poll(() => page.evaluate(() => window.__nativeBoxes.activity?.textColor)).toBe(1);
+      assert.equal(await page.evaluate(() => window.__nativeBoxes.body.textColor), 4);
+      assert.match(await page.evaluate(() => window.__nativeBoxes.activity.content), /Read agents.md/);
+      assert.notEqual(await page.locator('.ask-message-activity').first().evaluate(el => getComputedStyle(el).color),
+        await page.locator('.ask-message-assistant').first().evaluate(el => getComputedStyle(el).color));
       await expect.poll(() => page.evaluate(() => window.__nativeMenu?.[1]?.itemName)).toBe('Go to latest');
       await page.evaluate(() => window.__askUI.returnToReading()); await expect.poll(body).toBe(reading);
       await expect.poll(() => page.evaluate(() => window.__nativeMenu?.[1]?.itemName)).toBe('Go to position');
@@ -121,6 +135,7 @@ try {
         return { key: message.dataset.key, offset: message.getBoundingClientRect().top };
       });
       turns.unshift({ id: 'backfill', question: 'Older mobile question?', answer: 'Older mobile answer.', state: 'complete' });
+      turns[2].activities = [{ id: 'late-tool', kind: 'tool', text: 'Read todo.txt', state: 'complete' }];
       turns.push({ id: 'later', question: 'Later mobile question?', answer: 'Later mobile answer.', state: 'complete' });
       await poll(); assert.deepEqual(await page.evaluate(() => window.__askUI.session.conversation.anchor(window.__askUI.session.y)), anchor);
       await expect.poll(body).toBe(before);
