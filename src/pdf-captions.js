@@ -155,7 +155,7 @@ export function pdfGalleryItems(layout) {
   if (layout?.format !== 'pdf') return [];
   return layout.blocks.filter(block => block.kind === 'figure' && !block.annotationLabel).map(block => ({
     id: block.figureId || pdfFigureId(block.page, block), block, page: block.page,
-    title: block.figureCaption?.reference || (block.figureBounds?.some(b => b.kind === 'table') ? `Table · page ${block.page}` : `Figure · page ${block.page}`),
+    title: block.fullPage ? `Page image · page ${block.page}` : block.figureCaption?.reference || (block.figureBounds?.some(b => b.kind === 'table') ? `Table · page ${block.page}` : `Figure · page ${block.page}`),
     caption: block.figureCaption?.text || '',
   }));
 }

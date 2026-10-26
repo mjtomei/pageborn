@@ -80,6 +80,7 @@ let persistTimer = null; let searchTimer = null;
 let animationTimer = null; let playbackBlocked = true;
 let pdfDocument = null; let selectionVersion = 0; let pdfBitmap = null; let pdfRendering = false;
 let pdfOpenMessage = null;
+let pdfProgressRefresh = null;
 let pendingPdfPosition = null;
 let pdfNotes = null; let footnotesView = null; let askUI;
 const browserStore = new LocalLibrary();
@@ -534,6 +535,7 @@ function selectDocument(id, save = true) {
   pendingPdfPosition = null;
   notice('');
   diagnostics.log('select-document', { selection: version });
+  pdfRendering?.controller?.abort(); pdfProgressRefresh = null;
   pdfDocument?.destroy().catch(() => {}); pdfDocument = null; pdfBitmap = null; pdfOpenMessage = null; pdfRendering = false;
   pdfPassage.setLayout(null, 0);
   pdfGallery.setLayout(null);
@@ -570,6 +572,19 @@ function selectDocument(id, save = true) {
       $('pdf-reflow').checked = reflow; $('pdf-text-size').value = String(textSize);
       $('pdf-text-size-control').hidden = !reflow; $('pdf-fit-figures').checked = fitFigures;
       const savedPosition = preferences.positions[documentKey()];
+      let progressText = 'Opening PDF…'; let progressAt = 0;
+      pdfProgressRefresh = (force = false) => {
+        if (version !== selectionVersion || !force && performance.now() - progressAt < 500) return;
+        progressAt = performance.now();
+        if (layout?.preparation?.complete === false) {
+          const { readyPages, totalPages } = layout.preparation;
+          notice(`${readyPages} of ${totalPages} PDF pages ready. ${progressText} ${pendingPdfPosition
+            ? `Preparing your saved place on page ${pendingPdfPosition.pdf.page}. Start reading or choose a position to stay in the ready pages.`
+            : 'You can read now.'} Position and reading time cover the ready pages.`);
+        } else if (!layout) {
+          notice(progressText); pdfOpenMessage = { body: progressText, status: 'Loading PDF', kind: 'loading' }; dirty = true;
+        }
+      };
       const acceptLayout = result => {
         if (version !== selectionVersion) return;
         // Show ready pages even when the saved place is farther ahead. Keep
@@ -593,12 +608,8 @@ function selectDocument(id, save = true) {
           footnotesView = { layout: pdfNotes, y: pdfNotes ? restorePdfAnchor(pdfNotes, note) : 0 };
         }
         lastPassage = -1; lastSentKey = '';
-        if (layout.preparation?.complete === false) {
-          const { readyPages, totalPages } = layout.preparation;
-          notice(`${readyPages} of ${totalPages} PDF pages ready. ${pendingPdfPosition
-            ? `Preparing your saved place on page ${pendingPdfPosition.pdf.page}. Start reading or choose a position to stay in the ready pages.`
-            : 'You can read now; more pages are preparing.'} Position and reading time cover the ready pages.`);
-        } else notice(opening.warnings.join(' '));
+        if (layout.preparation?.complete === false) pdfProgressRefresh?.(true);
+        else { pdfProgressRefresh = null; notice(opening.warnings.join(' ')); }
         renderOutline(); renderBookmarks(); renderControls(); rememberPosition(); dirty = true;
         animate(performance.now(), true);
       };
@@ -606,13 +617,14 @@ function selectDocument(id, save = true) {
       // Closing Ask cancelled recording above. Give PDF reflow the memory held
       // by idle speech workers; their saved checks/weights survive this release.
       askUI.speech.releaseForReading().then(() => opening.open(content, mode, text => {
-        if (version !== selectionVersion || layout) return;
-        notice(text); pdfOpenMessage = { body: text, status: 'Loading PDF', kind: 'loading' }; dirty = true;
+        if (version !== selectionVersion) return;
+        progressText = text; pdfProgressRefresh?.();
       }, { keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures, onPartial: acceptLayout })).then(acceptLayout).catch(error => {
         if (error !== opening.openError) opening.report('pdf-open-error', error);
         if (!layout || version !== selectionVersion) opening.destroy().catch(() => {});
         else opening.ocr?.destroy().catch(() => {});
         if (version === selectionVersion) {
+          pdfProgressRefresh = null;
           if (layout) {
             layout.preparation = { ...layout.preparation, failed: true };
             reader.pause(); lastSentKey = ''; dirty = true;
@@ -1426,6 +1438,7 @@ function flushPosition() { rememberPosition(); phonePreferences?.flush(); }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && (askUI?.phoneMic.capturing || askUI?.phoneMic.pending)) askUI.close();
   diagnostics.log('visibility', { state: document.visibilityState }); flushPosition();
+  if (!document.hidden) { pdfProgressRefresh?.(true); dirty = true; animate(performance.now(), true); }
 });
 window.addEventListener('pagehide', () => { askUI?.cancelPairing(); askUI?.close(); askUI?.speech.dispose(); flushPosition(); });
 window.addEventListener('pageshow', event => { if (event.persisted) voiceStartup = startVoiceSetup(); });
@@ -1488,15 +1501,21 @@ function animate(now, immediate = false) {
     if (askUI?.glassesVisible) Object.assign(frame, { message: askUI.frame(), wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
     if (modePicker) frame.modePicker = { ...modePicker };
     if (previewMenu) Object.assign(frame, { message: { body: `Pageborne menu\n\n${appMenu(frame.askMenu).map((item, i) => `${i === previewMenu.index ? '> ' : '  '}${item.itemName}`).join('\n')}`, statusLeft: 'Swipe to choose', statusRight: 'Tap to select' }, wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
-    if (frame.layout?.format === 'pdf' && !frame.message && (!frame.wordFrame || frame.wordFrame.image) && !frame.nativePdf && !picker && !positionPicker) {
+    const needsBitmap = frame.layout?.format === 'pdf' && !frame.message && (!frame.wordFrame || frame.wordFrame.image) && !frame.nativePdf && !picker && !positionPicker;
+    if (pdfRendering && (!needsBitmap || pdfRendering.layout !== frame.layout || pdfRendering.y !== frame.y || pdfRendering.mode !== frame.mode)) {
+      pdfRendering.controller.abort(); pdfRendering = false;
+    }
+    if (needsBitmap) {
       if (pdfBitmap?.layout !== frame.layout || pdfBitmap?.y !== frame.y || pdfBitmap?.mode !== frame.mode) {
         if (!pdfRendering) {
-          pdfRendering = true; const version = selectionVersion;
-          frame.layout.pdf.draw(frame.y, BODY_HEIGHT, true, { paging: frame.mode !== 'auto', centerImages: true, endAt: frame.wordFrame?.endAt ?? pdfImageEnd(frame.layout, frame.y) }).then(bitmap => {
-            if (version === selectionVersion) pdfBitmap = { layout: frame.layout, y: frame.y, mode: frame.mode, bitmap };
-          }).catch(error => { if (version === selectionVersion) { reader.pause(); notice(`Could not render PDF: ${error.message}`, true); } })
+          const job = { layout: frame.layout, y: frame.y, mode: frame.mode, controller: new AbortController() };
+          pdfRendering = job; const version = selectionVersion;
+          frame.layout.pdf.draw(frame.y, BODY_HEIGHT, true, { signal: job.controller.signal, paging: frame.mode !== 'auto', centerImages: true, endAt: frame.wordFrame?.endAt ?? pdfImageEnd(frame.layout, frame.y) }).then(bitmap => {
+            if (version === selectionVersion && pdfRendering === job && !job.controller.signal.aborted) pdfBitmap = { layout: frame.layout, y: frame.y, mode: frame.mode, bitmap };
+            else bitmap.width = bitmap.height = 1;
+          }).catch(error => { if (version === selectionVersion && !job.controller.signal.aborted) { reader.pause(); notice(`Could not render PDF: ${error.message}`, true); } })
             .finally(() => {
-              if (version === selectionVersion) { pdfRendering = false; dirty = true; animate(performance.now(), true); }
+              if (version === selectionVersion && pdfRendering === job) { pdfRendering = false; dirty = true; animate(performance.now(), true); }
             });
         }
         // A cold PDF raster must not hide the microphone popup. Show cached

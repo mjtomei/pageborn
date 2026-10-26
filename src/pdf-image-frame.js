@@ -6,6 +6,7 @@ export function pdfImageFrame(layout, y, height, endAt = Infinity) {
   const first = layout.blocks.findLastIndex(block => block.y <= y + .5);
   const block = layout.blocks[first];
   if (!block || block.reflow || block.y >= endAt) return scroll;
+  if (block.fullPage) return { y: block.y, end: block.y + block.drawHeight, top: Math.floor((height - block.drawHeight) / 2) };
   let end = block.y;
   for (let i = first; i < layout.blocks.length; i++) {
     const next = layout.blocks[i];

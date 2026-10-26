@@ -1,5 +1,6 @@
 import { normalizePdfColors } from './pdf-colors.js';
 import { renderPdfPage } from './pdf-render.js';
+import { PdfWork } from './pdf-work.js';
 
 export const PDF_RASTER_TILE = 384;
 const HALO = 2;
@@ -35,23 +36,25 @@ export function pdfRasterGeometry(block, index, analysisScale) {
 // from the original PDF at twice their final size, then reduced once. A small
 // tile cache and one render at a time bound canvas memory on the phone.
 export class PdfRaster {
-  constructor(pdf, scales, normalizeColors) {
+  constructor(pdf, scales, normalizeColors, work = new PdfWork()) {
     this.pdf = pdf; this.scales = scales; this.normalizeColors = normalizeColors;
     this.cache = new Map(); this.pending = new Map(); this.ids = new WeakMap(); this.nextId = 0;
-    this.queue = Promise.resolve(); this.closed = false;
+    this.work = work; this.closed = false;
   }
-  tile(block, index) {
+  tile(block, index, signal) {
     if (this.closed) return Promise.reject(new Error('PDF closed.'));
+    if (signal?.aborted) return Promise.reject(new Error('PDF preview closed.'));
     if (!this.ids.has(block)) this.ids.set(block, ++this.nextId);
     const key = `${this.ids.get(block)}:${index}`;
     if (this.cache.has(key)) {
       const canvas = this.cache.get(key); this.cache.delete(key); this.cache.set(key, canvas);
       return Promise.resolve(canvas);
     }
-    if (this.pending.has(key)) return this.pending.get(key);
-    const promise = this.queue.then(async () => {
+    if (!signal && this.pending.has(key)) return this.pending.get(key);
+    const promise = this.work.run(async () => {
       if (this.closed) throw new Error('PDF closed.');
-      const canvas = await this.render(block, index);
+      if (this.cache.has(key)) return this.cache.get(key);
+      const canvas = await this.render(block, index, signal);
       if (this.closed) { canvas.width = canvas.height = 1; throw new Error('PDF closed.'); }
       this.cache.set(key, canvas);
       while (this.cache.size > 12) {
@@ -60,13 +63,13 @@ export class PdfRaster {
         this.cache.delete(oldest);
       }
       return canvas;
-    }).finally(() => this.pending.delete(key));
-    this.pending.set(key, promise); this.queue = promise.catch(() => {});
+    }, signal).finally(() => { if (!signal) this.pending.delete(key); });
+    if (!signal) this.pending.set(key, promise);
     return promise;
   }
-  async render(block, index) {
+  async render(block, index, signal) {
     const page = await this.pdf.getPage(block.page);
-    if (this.closed) throw new Error('PDF closed.');
+    if (this.closed || signal?.aborted) throw new Error('PDF preview closed.');
     // Rendered tiles own their pixels. Release the previous page's decoded
     // images so reading a long scan does not retain every full-size image.
     if (this.page && this.page !== page) this.page.cleanup();
@@ -74,9 +77,11 @@ export class PdfRaster {
     const geometry = pdfRasterGeometry(block, index, this.scales.get(block.page));
     const high = document.createElement('canvas'); high.width = geometry.renderWidth; high.height = geometry.renderHeight;
     const reduced = document.createElement('canvas'); reduced.width = high.width / SAMPLES; reduced.height = high.height / SAMPLES;
+    const cancel = () => this.task?.cancel();
     try {
       this.task = renderPdfPage(page, { canvas: high, viewport: page.getViewport({ scale: geometry.scale, rotation: block.pageRotation ?? page.rotate }),
         transform: geometry.transform, background: '#fff' });
+      signal?.addEventListener('abort', cancel, { once: true });
       await this.task.promise;
       if (this.normalizeColors) {
         const ctx = high.getContext('2d'); const pixels = ctx.getImageData(0, 0, high.width, high.height);
@@ -91,21 +96,21 @@ export class PdfRaster {
       const canvas = document.createElement('canvas'); canvas.width = geometry.width; canvas.height = geometry.height;
       canvas.getContext('2d').drawImage(reduced, HALO, HALO, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
       return canvas;
-    } finally { this.task = null; high.width = high.height = reduced.width = reduced.height = 1; }
+    } finally { signal?.removeEventListener('abort', cancel); this.task = null; high.width = high.height = reduced.width = reduced.height = 1; }
   }
   destroy() {
     this.closed = true; this.task?.cancel();
+    this.work.close();
     for (const canvas of this.cache.values()) canvas.width = canvas.height = 1;
     this.cache.clear();
   }
   cleanup(clean) {
     // Pause new thumbnail/preview tiles behind document cleanup. PDF.js cannot
     // drop shared fonts/images while any page is still rendering.
-    const pending = this.queue.then(async () => {
+    if (this.closed) return Promise.resolve();
+    return this.work.run(async () => {
       if (this.closed) return;
       await clean(); this.page = null;
     });
-    this.queue = pending.catch(() => {});
-    return pending;
   }
 }

@@ -2,6 +2,8 @@ import { getDocument, PDFWorker, Util, OPS, version as pdfjsVersion } from 'pdfj
 import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?worker&inline';
 import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
 import { MAX_PDF_PAGES } from './pdf-limits.js';
+import { PdfWork } from './pdf-work.js';
+import { pdfWholePageImage } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -39,7 +41,7 @@ export class PdfDocument {
     this.diagnostics = diagnostics; this.selection = selection;
     this.preparationCache = preparationCache;
     this.cache = new Map(); this.pending = new Map(); this.marginMasks = new Map(); this.pageScales = new Map(); this.pageTurns = new Map(); this.destroyed = false;
-    this.renders = new Set();
+    this.renders = new Set(); this.work = new PdfWork();
   }
   checkpoint(stage, details = {}) {
     if (this.destroyed) throw new Error('PDF closed.');
@@ -125,11 +127,11 @@ export class PdfDocument {
       this.layout = restored.layout; this.layout.pdf = this;
       this.marginMasks = restored.marginMasks; this.pageScales = restored.pageScales;
       this.pageTurns = new Map(this.layout.blocks.filter(block => block.turn).map(block => [block.page, block.turn]));
-      this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors);
+      this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors, this.work);
       this.checkpoint('ready', { totalBlocks: this.layout.blocks.length, cached: true });
       return this.layout;
     }
-    this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors);
+    this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors, this.work);
     const settings = { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures, measure };
     const earlyPages = []; const earlyPreparations = []; let earlyEndMatter = false;
     // Keep only layout objects already needed by the readable prefix, never
@@ -157,13 +159,82 @@ export class PdfDocument {
       if (this.destroyed) throw new Error('PDF closed.');
       onProgress(`Reading PDF text ${number} of ${this.pdf.numPages}…`);
       this.checkpoint('extracting-text', { page: number });
+      textPages.push(await this.readPageText(number, reflow, onProgress));
+      // Make a provisional prefix readable while later pages are extracted
+      // or recognized; the final pass still compares the whole
+      // document for recurring furniture, heading sizes and footnote styles.
+      // A short prefix is enough while extracting embedded text. Preparing
+      // every page here often renders the whole paper twice: running headers
+      // and footnote sizes only settle after the text pass. Scanned documents
+      // keep publishing throughout their much slower OCR pass.
+      if (onPartial && (number <= 6 || reflow && textPages.some(page => page.needsOcr)) && number < this.pdf.numPages
+        && (number === 1 || number % 3 === 0)) {
+        const context = this.analysisContext(textPages, settings);
+        for (let next = earlyPages.length + 1; next <= number; next++) {
+          const inputs = pageInputs(next, context, earlyEndMatter);
+          const prepared = await this.preparePage(next, { ...settings, ...context, textPages, endMatter: earlyEndMatter });
+          earlyPreparations.push({ ...inputs, prepared, masks: this.marginMasks.get(next), romanSections: this.romanSections });
+          earlyPages.push(prepared.page); earlyEndMatter = prepared.endMatter;
+        }
+        publish(earlyPages);
+      }
+      if (number % 3 === 0) await this.releasePreparationMemory();
+      await this.yieldPreparation();
+    }
+    if (textPages.filter(page => page.romanHints.length).length >= 2) {
+      this.romanSections = true;
+      for (const page of textPages) if (page.romanHints.length) {
+        page.text = restorePdfRomanHeadings(page.text, page.romanHints);
+        if (page.layoutFromOcr) page.layoutText = page.text;
+      }
+    }
+    const context = this.analysisContext(textPages, settings);
+    let pages = []; let endMatter = false;
+    for (let number = 1; number <= this.pdf.numPages; number++) {
+      if (this.destroyed) throw new Error('PDF closed.');
+      onProgress(`Preparing PDF page ${number} of ${this.pdf.numPages}…`);
+      const inputs = pageInputs(number, context, endMatter); const early = earlyPreparations[number - 1];
+      let prepared;
+      if (early && early.text === inputs.text && early.layoutText === inputs.layoutText && early.context === inputs.context) {
+        prepared = early.prepared;
+        this.marginMasks.set(number, early.masks); this.romanSections = early.romanSections;
+        this.diagnostics?.log('pdf-page-reused', { selection: this.selection, page: number });
+      } else prepared = await this.preparePage(number, { ...settings, ...context, textPages, endMatter });
+      pages.push(prepared.page); endMatter = prepared.endMatter;
+      // Do not replace a long provisional prefix with a shorter final prefix.
+      if (number >= earlyPages.length && (number === 1 || number % 3 === 0)) publish(pages);
+      if (number % 3 === 0) await this.releasePreparationMemory();
+      await this.yieldPreparation();
+    }
+    this.checkpoint('building-reader');
+    await this.releasePreparationMemory();
+    await this.ocr.destroy();
+    this.layout = this.buildLayout(pages, settings);
+    this.layout.preparation = { complete: true, readyPages: this.pdf.numPages, totalPages: this.pdf.numPages };
+    if (!this.layout.blocks.length) throw new Error('This PDF contains no visible content.');
+    if (cacheKey && !this.ocrFailed && !this.destroyed) {
+      this.checkpoint('saving-preparation'); onProgress('Saving prepared PDF…');
+      try {
+        const saved = await this.preparationCache.write(cacheKey, packPdfPreparation(this.layout, this.marginMasks, this.pageScales), () => !this.destroyed);
+        if (saved) this.diagnostics?.log('pdf-cache-saved', { selection: this.selection });
+      } catch (error) {
+        this.report('pdf-cache-write-error', error);
+        this.warnings.push('Could not save the prepared PDF. It may need preparation again next time.');
+      }
+    }
+    if (this.destroyed) throw new Error('PDF closed.');
+    this.checkpoint('ready', { totalBlocks: this.layout.blocks.length, cached: false });
+    return this.layout;
+  }
+  readPageText(number, reflow, onProgress) {
+    return this.work.run(async () => {
       const page = await this.pdf.getPage(number); let viewport = pdfAnalysisViewport(page);
       const embedded = textBoxes(await readPdfText(page), viewport);
       let scanTranscript = false;
       if (reflow && embedded.length) {
         const ops = await page.getOperatorList();
         if (ops.fnArray.some((op, i) => op === OPS.setTextRenderingMode && ops.argsArray[i][0] === 3)) {
-          await this.renderPage(number);
+          await this.renderAnalysisPage(number);
           scanTranscript = pdfHasScanTranscript(ops, OPS, page.imageCoordinates || []);
         }
       }
@@ -198,82 +269,19 @@ export class PdfDocument {
           }
         }
       }
-      textPages.push({ width: Math.ceil(viewport.width), height: Math.ceil(viewport.height), needsOcr,
+      const extracted = { width: Math.ceil(viewport.width), height: Math.ceil(viewport.height), needsOcr,
         romanHints: scanTranscript && !turn ? pdfRomanHeadingHints(embedded, viewport.width, viewport.height) : [],
         text, orientationMasks, layoutFromOcr: Boolean(turn || scanTranscript || pdfWordGeometryNeedsOcr(embedded)),
         // A corrupt encoding can still have useful line geometry. Keep it
         // for crop/column boundaries, but replace its strings with OCR below.
         layoutText: turn || scanTranscript || pdfWordGeometryNeedsOcr(embedded) ? text : needsOcr ? embedded.filter(box => [box.x, box.y, box.width, box.height].every(Number.isFinite)
-          && box.width > 0 && box.height >= 2) : text });
+          && box.width > 0 && box.height >= 2) : text };
       // OCR renders can use a different rotation and recording mode. The
       // layout pass needs fresh image/operator bounds for its own viewport.
       this.releasePage(number);
       page.cleanup();
-      // Make a provisional prefix readable while later pages are extracted
-      // or recognized; the final pass still compares the whole
-      // document for recurring furniture, heading sizes and footnote styles.
-      // A short prefix is enough while extracting embedded text. Preparing
-      // every page here often renders the whole paper twice: running headers
-      // and footnote sizes only settle after the text pass. Scanned documents
-      // keep publishing throughout their much slower OCR pass.
-      if (onPartial && (number <= 6 || reflow && textPages.some(page => page.needsOcr)) && number < this.pdf.numPages
-        && (number === 1 || number % 3 === 0)) {
-        const context = this.analysisContext(textPages, settings);
-        for (let next = earlyPages.length + 1; next <= number; next++) {
-          const inputs = pageInputs(next, context, earlyEndMatter);
-          const prepared = await this.preparePage(next, { ...settings, ...context, textPages, endMatter: earlyEndMatter });
-          earlyPreparations.push({ ...inputs, prepared, masks: this.marginMasks.get(next), romanSections: this.romanSections });
-          earlyPages.push(prepared.page); earlyEndMatter = prepared.endMatter;
-        }
-        publish(earlyPages);
-      }
-      if (number % 6 === 0) await this.releasePreparationMemory();
-      await this.yieldPreparation();
-    }
-    if (textPages.filter(page => page.romanHints.length).length >= 2) {
-      this.romanSections = true;
-      for (const page of textPages) if (page.romanHints.length) {
-        page.text = restorePdfRomanHeadings(page.text, page.romanHints);
-        if (page.layoutFromOcr) page.layoutText = page.text;
-      }
-    }
-    const context = this.analysisContext(textPages, settings);
-    let pages = []; let endMatter = false;
-    for (let number = 1; number <= this.pdf.numPages; number++) {
-      if (this.destroyed) throw new Error('PDF closed.');
-      onProgress(`Preparing PDF page ${number} of ${this.pdf.numPages}…`);
-      const inputs = pageInputs(number, context, endMatter); const early = earlyPreparations[number - 1];
-      let prepared;
-      if (early && early.text === inputs.text && early.layoutText === inputs.layoutText && early.context === inputs.context) {
-        prepared = early.prepared;
-        this.marginMasks.set(number, early.masks); this.romanSections = early.romanSections;
-        this.diagnostics?.log('pdf-page-reused', { selection: this.selection, page: number });
-      } else prepared = await this.preparePage(number, { ...settings, ...context, textPages, endMatter });
-      pages.push(prepared.page); endMatter = prepared.endMatter;
-      // Do not replace a long provisional prefix with a shorter final prefix.
-      if (number >= earlyPages.length && (number === 1 || number % 3 === 0)) publish(pages);
-      if (number % 6 === 0) await this.releasePreparationMemory();
-      await this.yieldPreparation();
-    }
-    this.checkpoint('building-reader');
-    await this.releasePreparationMemory();
-    await this.ocr.destroy();
-    this.layout = this.buildLayout(pages, settings);
-    this.layout.preparation = { complete: true, readyPages: this.pdf.numPages, totalPages: this.pdf.numPages };
-    if (!this.layout.blocks.length) throw new Error('This PDF contains no visible content.');
-    if (cacheKey && !this.ocrFailed && !this.destroyed) {
-      this.checkpoint('saving-preparation'); onProgress('Saving prepared PDF…');
-      try {
-        const saved = await this.preparationCache.write(cacheKey, packPdfPreparation(this.layout, this.marginMasks, this.pageScales), () => !this.destroyed);
-        if (saved) this.diagnostics?.log('pdf-cache-saved', { selection: this.selection });
-      } catch (error) {
-        this.report('pdf-cache-write-error', error);
-        this.warnings.push('Could not save the prepared PDF. It may need preparation again next time.');
-      }
-    }
-    if (this.destroyed) throw new Error('PDF closed.');
-    this.checkpoint('ready', { totalBlocks: this.layout.blocks.length, cached: false });
-    return this.layout;
+      return extracted;
+    });
   }
   analysisContext(textPages, { keepRepeatedText }) {
     this.checkpoint('detecting-repeated-text');
@@ -300,10 +308,16 @@ export class PdfDocument {
     layout.sourcePages = pages;
     return layout;
   }
-  async preparePage(number, { textPages, repeatedMasks, bodySize, noteStyle, mode, keepMarginNotes,
+  preparePage(number, settings) {
+    return this.work.run(async () => {
+      try { return await this.preparePageContents(number, settings); }
+      finally { this.releasePage(number); }
+    });
+  }
+  async preparePageContents(number, { textPages, repeatedMasks, bodySize, noteStyle, mode, keepMarginNotes,
     keepRepeatedText, normalizeColors, reflow, textSize, measure, endMatter }) {
     if (this.destroyed) throw new Error('PDF closed.');
-    const { canvas, page, viewport, imageCoordinates, recordedBBoxes } = await this.renderPage(number);
+    const { canvas, page, viewport, imageCoordinates, recordedBBoxes } = await this.renderAnalysisPage(number);
     this.checkpoint('reading-pixels');
     const ctx = canvas.getContext('2d');
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -335,7 +349,7 @@ export class PdfDocument {
     const input = { width: canvas.width, height: canvas.height,
       data: pixels.data, text: textPages[number - 1].layoutText,
       figureText: text, images, mode: contents.length ? 'single' : mode, keepMarginNotes, pageMasks: repeatedMasks[number - 1] };
-    let analysis = analyzePdfPage(input);
+    let analysis = pdfWholePageImage({ ...input, text: textPages[number - 1].text }) || analyzePdfPage(input);
     await this.yieldPreparation();
     if (needsOcr && reflow && analysis.columns && Number.isFinite(analysis.split)) {
       const corrected = splitPdfOcrColumns(text,analysis.split);
@@ -347,7 +361,7 @@ export class PdfDocument {
     // OCR must not turn a few recognized cover words into a new column
     // layout that pulls discarded binding marks back into the reading crop.
     // Keep the scan's pixel geometry and attach recognized text afterward.
-    if (reflow && needsOcr) for (const block of analysis.blocks) {
+    if (reflow && needsOcr) for (const block of analysis.blocks.filter(block => !block.fullPage)) {
       block.lines = text.filter(t => t.x + t.width / 2 >= block.x && t.x + t.width / 2 < block.x + block.width
         && t.y + t.height / 2 >= block.y && t.y + t.height / 2 < block.y + block.height);
       block.text = block.lines.map(t => t.text).join(' ');
@@ -355,7 +369,7 @@ export class PdfDocument {
     }
     analysis.blocks = reunitePdfFigureFragments(analysis.blocks);
     this.marginMasks.set(number, analysis.marginMasks);
-    if (reflow) {
+    if (reflow && !analysis.blocks.some(block => block.fullPage)) {
       analysis.blocks = joinPdfTextTails(joinPdfTextFragments(analysis.blocks, pixels.data, canvas.width));
       if (needsOcr && !this.ocrFailed && !this.headingOcrFailed) {
         // Sparse Roman section labels are often omitted or read as 11/111 by
@@ -407,7 +421,8 @@ export class PdfDocument {
     }
     return { page: { number, width: canvas.width, height: canvas.height, ...analysis }, endMatter };
   }
-  async renderPage(number) {
+  renderPage(number) { return this.work.run(() => this.renderAnalysisPage(number)); }
+  async renderAnalysisPage(number) {
     if (this.destroyed) throw new Error('PDF closed.');
     if (this.cache.has(number)) { const value = this.cache.get(number); this.cache.delete(number); this.cache.set(number, value); return value; }
     if (this.pending.has(number)) return this.pending.get(number);
@@ -452,7 +467,7 @@ export class PdfDocument {
     try {
       const ctx = canvas.getContext('2d');
       for (let index = 0; index * PDF_RASTER_TILE < canvas.height; index++) {
-        check(); const tile = await this.raster.tile(crop, index); check();
+        check(); const tile = await this.raster.tile(crop, index, signal); check();
         ctx.drawImage(tile, 0, index * PDF_RASTER_TILE);
       }
       ctx.fillStyle = '#fff';
@@ -485,8 +500,11 @@ export class PdfDocument {
         const left = Math.round((PDF_WIDTH - block.width * block.scale) / 2);
         for (let index = Math.floor((top - block.y) / PDF_RASTER_TILE); index * PDF_RASTER_TILE < bottom - block.y; index++) {
           let source;
-          try { source = await this.raster.tile(block, index); }
-          catch (error) { this.report('pdf-tile-error', error, { stage: 'rendering-tile', page: block.page, tile: index, kind: block.kind }); throw error; }
+          try { source = await this.raster.tile(block, index, signal); }
+          catch (error) {
+            if (!this.destroyed && !signal?.aborted) this.report('pdf-tile-error', error, { stage: 'rendering-tile', page: block.page, tile: index, kind: block.kind });
+            throw error;
+          }
           check();
           const tileY = block.y + index * PDF_RASTER_TILE;
           const start = Math.max(top, tileY); const end = Math.min(bottom, tileY + source.height);
@@ -515,7 +533,7 @@ export class PdfDocument {
   }
   async destroy() {
     if (this.closing) return this.closing;
-    this.destroyed = true;
+    this.destroyed = true; this.work.close();
     for (const task of this.renders) task.cancel();
     for (const number of this.cache.keys()) this.releasePage(number);
     this.raster?.destroy();

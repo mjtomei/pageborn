@@ -23,3 +23,17 @@ test('OCR worker crashes and timeouts terminate the worker without leaving a pen
   await assert.rejects(timeout.call('recognize', {}), /timed out/);
   assert.equal(timeout.worker.terminated, true);
 });
+
+test('background suspension does not expire OCR; returning resumes work and the watchdog', async () => {
+  const lifecycle = new EventTarget(); lifecycle.hidden = false;
+  const client = new OcrWorker('local', () => {}, FakeWorker, 30, lifecycle);
+  const recognizing = client.call('recognize', {});
+  lifecycle.hidden = true; lifecycle.dispatchEvent(new Event('visibilitychange'));
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.notEqual(client.worker.terminated, true); assert.equal(client.pending.size, 1);
+  lifecycle.hidden = false; lifecycle.dispatchEvent(new Event('visibilitychange'));
+  client.worker.reply('resolve', { text: 'continued page' });
+  assert.deepEqual(await recognizing, { text: 'continued page' });
+  await assert.rejects(client.call('recognize', {}), /timed out/);
+  assert.equal(client.worker.terminated, true); assert.equal(client.pending.size, 0);
+});

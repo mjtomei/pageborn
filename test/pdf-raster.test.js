@@ -73,3 +73,25 @@ test('PDF shared-resource cleanup waits for rendering and gates new tiles', asyn
   releaseCleanup(); await cleaning; await second; assert.deepEqual(calls, ['render-1', 'cleanup', 'render-2']);
   raster.destroy(); await raster.cleanup(() => { throw Error('Closed PDFs cannot clean again'); });
 });
+
+test('rapid scrolling drops queued tiles and aborts the active PDF render', async () => {
+  const originalDocument = globalThis.document; let rejectRender, cancelled = 0, rendered = 0;
+  globalThis.document = { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) };
+  const page = { getViewport: () => ({}), render: () => {
+    rendered++;
+    return { promise: new Promise((_, reject) => { rejectRender = reject; }),
+      cancel: () => { cancelled++; rejectRender(new Error('render cancelled')); },
+      _internalRenderTask: { _useRequestAnimationFrame: true } };
+  } };
+  const raster = new PdfRaster({ getPage: async () => page }, new Map([[1, 1]]), false);
+  const block = { page: 1, x: 0, sourceY: 0, width: 576, scale: 1, drawHeight: 3000 };
+  const active = new AbortController(), queued = new AbortController();
+  try {
+    const first = assert.rejects(raster.tile(block, 0, active.signal), /cancelled/);
+    const second = assert.rejects(raster.tile(block, 1, queued.signal), /preview closed/);
+    await new Promise(resolve => setImmediate(resolve));
+    queued.abort(); active.abort(); await Promise.all([first, second]);
+    assert.equal(cancelled, 1); assert.equal(rendered, 1); assert.equal(raster.cache.size, 0);
+    assert.equal(raster.work.jobs.length, 0);
+  } finally { raster.destroy(); globalThis.document = originalDocument; }
+});

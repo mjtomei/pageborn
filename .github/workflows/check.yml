@@ -27,3 +27,4 @@ jobs:
           npm run test:build-profiles
           npm run test:pdf-decoders
           npm run test:pdf-progress
+          npm run test:pdf-live

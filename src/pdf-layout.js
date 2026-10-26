@@ -288,6 +288,8 @@ export function analyzePdfPage({ width, height, data, text = [], figureText = te
 
 export function pdfPageTurn(layout, y, direction) {
   if (direction < 0) return layout.pages.findLast(value => value < y - .5) ?? Math.max(0, y - PDF_SCREEN + 27);
+  const current = layout.blocks.findLastIndex(block => block.y <= y + .5);
+  if (layout.blocks[current]?.fullPage) return Math.min(layout.maxY, layout.blocks[current + 1]?.y ?? layout.maxY);
   const native = pdfNativeWindow(layout, y);
   if (native) return native.nextY;
   const textStart = pdfImageEnd(layout, y);
@@ -319,9 +321,9 @@ export function createPdfLayout(pages, { fitFigures = true, textSize = 20, readi
     if (page.blocks.some(block => block.reflow) && crop.kind === 'scan' && !crop.lines.length
       && crop.height <= 8 && crop.width >= Math.max(80, crop.height * 40)) continue;
     let scale = Math.min(crop.fillWidth ? (crop.maxScale ?? 4) : 2, PDF_WIDTH / crop.width);
-    // Fit moderately tall figures without shrinking very tall diagrams to a
-    // narrow, unreadable thumbnail. Those retain continuous scrolling.
-    if (fitFigures && crop.kind === 'figure' && crop.width * PDF_SCREEN / crop.height >= PDF_WIDTH * .5) {
+    // Covers and full-page plates always occupy one pane. Other very tall
+    // diagrams retain continuous scrolling unless they fit at a readable width.
+    if (crop.fullPage || fitFigures && crop.kind === 'figure' && crop.width * PDF_SCREEN / crop.height >= PDF_WIDTH * .5) {
       scale = Math.min(scale, PDF_SCREEN / crop.height);
     }
     const block = { ...crop, sourceY: crop.y, y, page: page.number, scale, drawHeight: Math.ceil(crop.height * scale - 1e-8) };

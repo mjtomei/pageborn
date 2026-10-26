@@ -2,7 +2,7 @@
 // third-party PDFs or user documents are needed for the regression suite.
 import { deflateSync } from 'node:zlib';
 
-export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [], jpeg2000 = false } = {}) {
+export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [], jpeg2000 = false, pages = 1 } = {}) {
   const compressed = jpeg2000 ? pixels : deflateSync(pixels);
   const stream = `q 600 0 0 800 0 0 cm /Scan Do Q\n` + textLayer.map(({ text, x, y, size = 24 }) =>
     `BT 3 Tr /F1 ${size} Tf 1 0 0 1 ${x} ${800 - y} Tm (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`).join('\n');
@@ -14,12 +14,14 @@ export function scannedPdfFixture(width, height, pixels, { bilevel = false, text
     Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ${jpeg2000 ? '/Filter /JPXDecode' : `/ColorSpace /${bilevel ? 'DeviceGray' : 'DeviceRGB'} /BitsPerComponent ${bilevel ? 1 : 8} /Filter /FlateDecode`} /Length ${compressed.length} >>\nstream\n`), compressed, Buffer.from('\nendstream')]),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ];
+  for (let i = 1; i < pages; i++) objects.push(objects[2]);
+  objects[1] = `<< /Type /Pages /Count ${pages} /Kids [${[3, ...Array.from({ length: pages - 1 }, (_, i) => 7 + i)].map(id => `${id} 0 R`).join(' ')}] >>`;
   const parts = [Buffer.from('%PDF-1.7\n')]; const offsets = []; let length = parts[0].length;
   for (const [i, object] of objects.entries()) {
     offsets.push(length); const part = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), Buffer.from(object), Buffer.from('\nendobj\n')]);
     parts.push(part); length += part.length;
   }
-  parts.push(Buffer.from(`xref\n0 7\n0000000000 65535 f \n${offsets.map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
+  parts.push(Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
   return Buffer.concat(parts);
 }
 
