@@ -1,6 +1,7 @@
 import { AtomicPhoneValue, STORAGE_PREFIX, chunksOf, descriptor, readChunks } from './phone-storage.js';
 import { preparePdfNative } from './pdf-native.js';
 import { pdfPageTurn } from './pdf-layout.js';
+import { MAX_PDF_PAGES } from './pdf-limits.js';
 
 // Increment only when preparation geometry/recognition changes, not on every
 // app release. The full source hash and every PDF formatting option also match.
@@ -27,7 +28,7 @@ export function unpackPdfPreparation(saved) {
     || !positions(layout.pages) || layout.pages[0] !== 0 || !Array.isArray(layout.blockY) || !layout.blockY.every(n => Number.isFinite(n) && n >= 0) || !positions(layout.lineStarts)
     || !Array.isArray(layout.headings) || !Array.isArray(layout.blocks) || !layout.blocks.length
     || !Array.isArray(saved.marginMasks) || !Array.isArray(saved.pageScales) || !saved.pageScales.length
-    || !saved.pageScales.every(([page, scale]) => Number.isInteger(page) && page > 0 && page <= 300 && positive(scale))
+    || !saved.pageScales.every(([page, scale]) => Number.isInteger(page) && page > 0 && page <= MAX_PDF_PAGES && positive(scale))
     || !layout.blocks.every(block => positive(block.width) && positive(block.height) && positive(block.scale) && positive(block.drawHeight)
       && Number.isFinite(block.x) && Number.isFinite(block.y) && Number.isFinite(block.sourceY)
       && saved.pageScales.some(([page]) => page === block.page) && typeof block.text === 'string' && Array.isArray(block.lines)

@@ -12,7 +12,7 @@ import { pdfAnchor, restorePdfAnchor, pdfPageTurn, PDF_WIDTH } from './pdf-layou
 import { pdfReadingViews, nearbyPdfNote } from './pdf-notes.js';
 import { pdfNativeWindow, pdfImageEnd, PdfAutoscroll, pdfEntryLines } from './pdf-native.js';
 import { openDocumentPicker, moveDocumentPicker, LIBRARIAN_ID } from './document-picker.js';
-import { librarySort, orderedDocuments } from './library-order.js';
+import { librarySort, orderedDocuments, recordDocumentOpen } from './library-order.js';
 import { openPositionPicker, movePositionPicker, togglePositionStep } from './position-picker.js';
 import { Reader, autoSpeed, speedFromSlider, speedToSlider, stepAutoSpeed } from './reader.js';
 import { wordsPerMinute, wordsPerGroup, wordSpeedFromSlider, wordSpeedToSlider, stepWordSpeed, MIN_WORD_RATE, MAX_WORD_RATE } from './speed-reading.js';
@@ -541,7 +541,7 @@ function selectDocument(id, save = true) {
   diagnostics.renderer = active?.format === 'pdf' ? 'pdf-image' : 'native-text';
   layout = null;
   if (active) {
-    preferences.recent = [active.id, ...(preferences.recent || []).filter(item => item !== active.id)].slice(0, 200);
+    if (save) recordDocumentOpen(preferences, active.id);
     $('title').textContent = active.title; $('doc-path').textContent = active.id;
     if (WEB) {
       const saved = preferences.positions[documentKey()];
@@ -974,7 +974,7 @@ async function startLibrarySync() {
         const wasPicker = picker, selectedId = active?.id;
         if (selectedId === id) rememberPosition();
         snapshot = result.snapshot;
-        await pdfPreparationCache.remove(id).catch(error => diagnostics.error('pdf-cache-delete-error', error));
+        if (id) await pdfPreparationCache.remove(id).catch(error => diagnostics.error('pdf-cache-delete-error', error));
         if (store !== browserStore) await browserStore.replace(snapshot).catch(() => {});
         if (selectedId === id) {
           if (!snapshot.documents.some(doc => doc.id === id)) delete preferences.selected;
@@ -1109,6 +1109,7 @@ async function deleteDocument(id) {
     if (store !== browserStore) await browserStore.replace(result.snapshot).catch(() => {});
     rememberPosition(); snapshot = result.snapshot; deleteId = null;
     if (preferences.recent) preferences.recent = preferences.recent.filter(item => item !== id);
+    if (preferences.openedAt) delete preferences.openedAt[id];
     delete preferences.positions[doc.positionKey]; delete preferences.bookmarks[doc.positionKey];
     askUI.forgetPaper(doc.positionKey);
     if (preferences.askPaperIds) delete preferences.askPaperIds[doc.positionKey];

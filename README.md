@@ -12,7 +12,9 @@ A reader for Even G2 glasses.
 
 ## Reading and conversations
 
-G2 supports native text, PDF reflow/figures, page reading, timed autoscroll and speed reading.
+G2 supports native text, PDF reflow/figures, page reading, timed autoscroll and speed reading. PDFs can contain up to 1,000 pages within the 16 MiB file limit. Ready pages become readable while the rest prepare.
+
+The library defaults to **Recent activity**: the newest addition, modification or explicit opening comes first. **Newest added** and **File name A–Z** are available on the phone. With even-terminal-patch 0.2.3, desktop addition dates are retained separately from original file modification dates and recovered for already-synced files. Older servers use the phone import date for new downloads; legacy files without dates retain their previous relative order.
 
 Markdown and `.txt` files use the same formatting on glasses and the web reader: single newlines within prose flow together, while blank lines separate paragraphs. Headings, lists and fenced code blocks follow Markdown formatting. The stored original stays unchanged.
 

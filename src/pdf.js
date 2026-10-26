@@ -1,6 +1,7 @@
 import { getDocument, PDFWorker, Util, OPS, version as pdfjsVersion } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?worker&inline';
 import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
+import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -118,7 +119,7 @@ export class PdfDocument {
     this.pdf = await Promise.race([this.task.promise, password]);
     this.checkpoint('document-loaded', { pages: this.pdf.numPages });
     if (this.destroyed) throw new Error('PDF closed.');
-    if (this.pdf.numPages > 300) throw new Error('This PDF exceeds the 300-page limit. Split it into smaller files.');
+    if (this.pdf.numPages > MAX_PDF_PAGES) throw new Error(`This PDF exceeds the ${MAX_PDF_PAGES.toLocaleString('en-US')}-page limit. Split it into smaller files.`);
     if (restored) {
       onProgress('Restoring prepared PDF…');
       this.layout = restored.layout; this.layout.pdf = this;
@@ -215,7 +216,7 @@ export class PdfDocument {
       // every page here often renders the whole paper twice: running headers
       // and footnote sizes only settle after the text pass. Scanned documents
       // keep publishing throughout their much slower OCR pass.
-      if (onPartial && (number <= 6 || textPages.some(page => page.needsOcr)) && number < this.pdf.numPages
+      if (onPartial && (number <= 6 || reflow && textPages.some(page => page.needsOcr)) && number < this.pdf.numPages
         && (number === 1 || number % 3 === 0)) {
         const context = this.analysisContext(textPages, settings);
         for (let next = earlyPages.length + 1; next <= number; next++) {

@@ -125,6 +125,12 @@ export function pdfFixture(kind = 'mixed') {
     commands.push('.02 .04 .16 rg 50 290 500 280 re f .55 .7 .95 rg');
     paragraph('DarkPanel', 55, 275, true, 12);
     pages.push(commands.join('\n'));
+  } else if (kind === 'long-book') {
+    for (let n = 1; n <= 450; n++) {
+      commands = []; text(`Original book page ${n}`, 60, 240, 16);
+      paragraph(`Page${n}Body`, 55, 290, true, 4);
+      pages.push(commands.join('\n'));
+    }
   } else if (kind === 'blank') pages.push('');
   else throw new Error(`Unknown PDF fixture ${kind}`);
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];

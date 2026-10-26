@@ -46,7 +46,7 @@ async function exclusive(file, bytes) {
   } catch (error) { if (error.code !== 'EEXIST') throw error; return false; }
   finally { await handle?.close(); }
 }
-async function readSafe(file, maxBytes = 16 * 1024 * 1024) {
+async function readSafe(file, maxBytes = 16 * 1024 * 1024, withStat = false) {
   const stat = await safeFile(file); if (!stat) return null;
   check(stat.size <= maxBytes, 'Document exceeds its size limit.');
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -54,7 +54,7 @@ async function readSafe(file, maxBytes = 16 * 1024 * 1024) {
     const actual = await handle.stat(); check(actual.isFile() && actual.nlink === 1 && actual.ino === stat.ino && actual.size <= maxBytes, 'Document changed during sync.', 409);
     const bytes = await handle.readFile(); check(bytes.length <= maxBytes, 'Document exceeds its size limit.');
     const after = await handle.stat(); check(actual.size === after.size && actual.mtimeMs === after.mtimeMs && actual.ctimeMs === after.ctimeMs, 'Document changed during sync.', 409);
-    return bytes;
+    return withStat ? { bytes, stat: after } : bytes;
   } finally { await handle.close(); }
 }
 async function rootDirectory(options = {}) {
@@ -87,9 +87,37 @@ function validContent(name, bytes) {
   }
 }
 async function documentAt(root, name) {
-  nameOf(name); const bytes = await readSafe(path.join(root, name), (/\.pdf$/i.test(name) ? 16 : 4) * 1024 * 1024);
-  if (!bytes) return null; validContent(name, bytes);
-  return { name, bytes: bytes.length, sha256: hash(bytes), data: bytes };
+  nameOf(name); const value = await readSafe(path.join(root, name), (/\.pdf$/i.test(name) ? 16 : 4) * 1024 * 1024, true);
+  if (!value) return null;
+  const { bytes, stat } = value; validContent(name, bytes);
+  return { name, bytes: bytes.length, sha256: hash(bytes), data: bytes,
+    addedAt: stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.ctimeMs, modifiedAt: stat.mtimeMs };
+}
+// Preserve addition dates through editors' atomic file replacements. A copied
+// original may retain a decades-old mtime; its creation here marks addition.
+async function dateFiles(root, files, complete = false, removed = []) {
+  const file = path.join(root, '.pageborne', 'dates.json');
+  return locked(file, async () => {
+    const bytes = await readSafe(file, 2 * 1024 * 1024);
+    const saved = bytes ? JSON.parse(bytes) : { version: 1, files: [] };
+    check(saved.version === 1 && Array.isArray(saved.files) && saved.files.every(item =>
+      typeof item.name === 'string' && Number.isFinite(item.addedAt) && item.addedAt > 0), 'Invalid library dates.');
+    const dates = new Map(saved.files.map(item => [item.name, item.addedAt]));
+    for (const name of removed) dates.delete(name);
+    if (complete) for (const name of dates.keys()) if (!files.some(item => item.name === name)) dates.delete(name);
+    for (const item of files) {
+      item.addedAt = dates.get(item.name) || item.addedAt;
+      dates.set(item.name, item.addedAt);
+    }
+    const next = Buffer.from(JSON.stringify({ version: 1, files: [...dates].map(([name, addedAt]) => ({ name, addedAt })) }));
+    check(next.length <= 2 * 1024 * 1024, 'Library date index is full.');
+    if (!bytes?.equals(next)) {
+      const temporary = file + '.' + randomUUID();
+      try { check(await exclusive(temporary, next)); await rename(temporary, file); }
+      finally { await unlink(temporary).catch(() => {}); }
+    }
+    return files;
+  });
 }
 async function archive(root, doc) {
   if (!doc) return;
@@ -101,7 +129,7 @@ async function archive(root, doc) {
     if (!await exclusive(file, doc.data)) check(hash(await readSafe(file)) === doc.sha256, 'Invalid library history.');
   });
 }
-const metadata = doc => ({ name: doc.name, bytes: doc.bytes, sha256: doc.sha256 });
+const metadata = doc => ({ name: doc.name, bytes: doc.bytes, sha256: doc.sha256, addedAt: doc.addedAt, modifiedAt: doc.modifiedAt });
 export async function libraryIdentity(options) { return identity(await rootDirectory(options)); }
 export async function libraryManifest({ name: selected } = {}, options) {
   if (selected !== undefined) nameOf(selected);
@@ -113,6 +141,7 @@ export async function libraryManifest({ name: selected } = {}, options) {
       await archive(root, doc); files.push(metadata(doc));
     } catch (error) { skipped.push({ name, reason: error.status ? error.message : 'Could not read this file.' }); }
   }
+  await dateFiles(root, files, selected === undefined && skipped.length === 0);
   return { version: 1, id, directory: root, files, skipped };
 }
 async function uploadLocation(file, options) {
@@ -170,6 +199,7 @@ export async function libraryCommit({ file, expected }, options) {
   const upload = await uploadLocation(file, options); file = upload.file;
   return locked(path.join(upload.root, file.name), async () => {
     const current = await documentAt(upload.root, file.name);
+    if (current) await dateFiles(upload.root, [current]);
     if (current?.sha256 === file.sha256) return metadata(current); // Retry after a lost acknowledgement.
     expectHash(current, expected);
     const bytes = file.bytes ? await readSafe(upload.target) : Buffer.alloc(0);
@@ -181,7 +211,7 @@ export async function libraryCommit({ file, expected }, options) {
       expectHash(await documentAt(upload.root, file.name), expected);
       await rename(temporary, path.join(upload.root, file.name));
     } finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
-    return file;
+    return metadata((await dateFiles(upload.root, [await documentAt(upload.root, file.name)]))[0]);
   });
 }
 export async function libraryRead({ name, sha256, offset = 0 }, options) {
@@ -193,9 +223,11 @@ export async function libraryRead({ name, sha256, offset = 0 }, options) {
 export async function libraryRemove({ name, expected }, options) {
   nameOf(name); const root = await rootDirectory(options);
   return locked(path.join(root, name), async () => {
-    const current = await documentAt(root, name); if (!current) return { removed: true };
+    const current = await documentAt(root, name);
+    if (!current) { await dateFiles(root, [], false, [name]); return { removed: true }; }
     expectHash(current, expected); await archive(root, current);
     expectHash(await documentAt(root, name), expected); await unlink(path.join(root, name));
+    await dateFiles(root, [], false, [name]);
     return { removed: true };
   });
 }

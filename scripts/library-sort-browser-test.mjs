@@ -79,6 +79,16 @@ try {
         await page.reload(); await expect(page.locator('#import')).toBeEnabled(); await showLibrary(page);
         await expect(page.locator('#library-sort')).toHaveValue('added');
         await expect.poll(order).toEqual(added);
+        // A new addition must outrank a previously opened document. Restoring
+        // the selected document after reload must not count as another open.
+        await page.locator('#library-sort').selectOption('recent');
+        await page.locator('#file-picker').setInputFiles({ name: 'new.txt', mimeType: 'text/plain', buffer: Buffer.from('New addition.') });
+        await expect.poll(order).toEqual(['new.txt', ...recent]);
+        await page.waitForTimeout(700); await page.reload();
+        await expect(page.locator('#import')).toBeEnabled(); await showLibrary(page);
+        await expect.poll(order).toEqual(['new.txt', ...recent]);
+        await page.locator('[data-document-id="appendix.md"] .document-card').click(); await showLibrary(page);
+        await expect.poll(order).toEqual(['appendix.md', 'new.txt', 'chapter2.md', 'chapter10.md']);
         for (const width of [320, 834]) {
           await page.setViewportSize({ width, height: 806 }); await showLibrary(page);
           await expect.poll(async () => {

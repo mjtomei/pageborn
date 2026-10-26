@@ -1,20 +1,27 @@
-import { chromium, expect } from '@playwright/test';
+import { chromium, webkit, expect } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { access, readdir, mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createApp } from '../server/app.js';
+import { createServer } from 'vite';
+import { displayProbe } from './display-probe.mjs';
 import { pdfFixture } from '../test/fixtures/pdfs.mjs';
 import { showLibrary, showTool, showDockOptions, chooseMode, waitForPdfReady } from './ui-helpers.mjs';
 
 const dir = path.resolve(process.env.PROGRESS_RESULTS || 'test-results/pdf-progress'); await mkdir(dir, { recursive: true });
-const server = createApp({ distDir: path.resolve('dist') }).listen(0, '127.0.0.1');
-await new Promise(resolve => server.once('listening', resolve));
+const server = await createServer({ mode: 'release', cacheDir: '.state/vite-pdf-progress', plugins: [displayProbe(), {
+  name: 'pdf-progress-speech-fixture', transform(code, id) {
+    if (id.endsWith('/src/main.js')) return code.replace('enabled: DEBUG', 'enabled: true');
+    if (id.endsWith('/src/speech-setup.js')) return code.replace('start(initialize) {', 'start(initialize) { this.blocked = false; return Promise.resolve();');
+  },
+}], server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false });
+await server.listen();
+const engine = process.env.PDF_BROWSER || 'chromium';
 const cache = path.join(os.homedir(), '.cache/ms-playwright');
 const cached = (await readdir(cache)).filter(name => /^chromium-\d+$/.test(name));
 const candidates = [process.env.CHROME_PATH, chromium.executablePath(), ...cached.flatMap(name => [path.join(cache, name, 'chrome-linux/chrome'), path.join(cache, name, 'chrome-linux64/chrome')])].filter(Boolean);
 const executablePath = (await Promise.all(candidates.map(async file => { try { await access(file); return file; } catch { return null; } }))).find(Boolean);
-const browser = await chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] });
+const browser = await (engine === 'webkit' ? webkit.launch({ executablePath: process.env.WEBKIT_PATH }) : chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] }));
 const context = await browser.newContext({ viewport: { width: 1100, height: 1000 } });
 const result = { passed: false, errors: [] }; let page;
 const phoneStorage = new Map();
@@ -61,12 +68,13 @@ const partial = async count => {
   await expect(page.locator('#notice-text')).toContainText(`${count} of`, { timeout: 120000 });
   await expect.poll(() => page.evaluate(() => window.__held)).toBeGreaterThan(0);
   assert.notEqual((await diag()).pdf.stage, 'ready');
+  await expect.poll(() => page.evaluate(() => window.__displayFrame?.layout?.format)).toBe('pdf');
 };
 const jump = async value => page.locator('#position').evaluate((el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, value);
 try {
   page = await context.newPage(); page.on('pageerror', error => result.errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}`); await expect(page.locator('#import')).toBeEnabled();
-  await context.setOffline(true);
+  await page.goto(server.resolvedUrls.local[0]); await expect(page.locator('#import')).toBeEnabled();
+
   await page.locator('#file-picker').setInputFiles([
     { name: 'progressive.pdf', mimeType: 'application/pdf', buffer: pdfFixture('repeated-text') },
     { name: 'other.md', mimeType: 'text/markdown', buffer: Buffer.from('# Another document\n\nStay in this document while the old PDF closes.') },
@@ -94,7 +102,7 @@ try {
   await page.evaluate(() => window.__release()); await waitForPdfReady(page);
   await expect.poll(async () => (await anchor()).speedCursor.key).toBe(word.key);
   assert.equal((await diag()).counts['pdf-cache-saved'], 1);
-  await context.setOffline(false); await page.reload(); await waitForPdfReady(page); await context.setOffline(true);
+  await page.reload(); await waitForPdfReady(page);
   assert.equal((await diag()).pdf.cached, true); assert.equal((await diag()).counts['pdf-partial-ready'] || 0, 0);
   result.completedCacheReused = true;
   // A saved later-page location must not be replaced by an early-prefix clamp.
@@ -145,12 +153,12 @@ try {
   await page.locator('#file-picker').setInputFiles({ name: 'notes.pdf', mimeType: 'application/pdf', buffer: pdfFixture('annotations') });
   await showLibrary(page); await page.locator('[data-document-id="notes.pdf"] .document-card').click(); await partial(1);
   await jump('350'); await page.waitForTimeout(500); const notePlace = await anchor();
-  await showTool(page, 'pdf'); await page.locator('#pdf-footnotes').click();
+  await showTool(page, 'pdf'); await page.locator('#pdf-footnotes').evaluate(button => button.click());
   await expect(page.locator('#pdf-footnotes')).toHaveText('Back to reading');
   await page.evaluate(() => window.__release());
   await expect.poll(async () => (await diag()).pdf.stage).toBe('ready');
   await expect(page.locator('#pdf-footnotes')).toHaveText('Back to reading');
-  await page.locator('#pdf-footnotes').click();
+  await page.locator('#pdf-footnotes').evaluate(button => button.click());
   await expect.poll(async () => (await anchor()).pdf).toEqual(notePlace.pdf);
   assert.equal((await diag()).counts['pdf-cache-saved'], 4);
   result.footnotesViewAndReturnSurviveCompletion = true;
@@ -171,7 +179,16 @@ try {
     await expect(page.locator('#title')).toHaveText('Another document');
     result.realScanReadableBeforeLaterPagesArrive = true;
   }
+  await page.evaluate(() => { window.__gate = 'page'; window.__holdFrom = 1; window.__held = 0; });
+  await page.locator('#file-picker').setInputFiles({ name: 'long-book.pdf', mimeType: 'application/pdf', buffer: pdfFixture('long-book') });
+  await showLibrary(page); await page.locator('[data-document-id="long-book.pdf"] .document-card').click(); await partial(1);
+  await page.evaluate(() => window.__release()); await waitForPdfReady(page, 120000);
+  assert.equal((await diag()).pdf.pages, 450);
+  await showLibrary(page); await page.locator('[data-document-id="other.md"] .document-card').click();
+  await page.locator('[data-document-id="long-book.pdf"] .document-card').click(); await waitForPdfReady(page, 120000);
+  assert.equal((await diag()).pdf.cached, true);
+  result.longBookAndCache = true;
   assert.deepEqual(result.errors, []); result.passed = true;
   console.log('PASS: reading during stalled preparation, growing preview, exact word and source position, cache completion, late-page restoration and cancellation.');
 } catch (error) { result.error = error.stack; result.diagnostic = await diag().catch(() => null); throw error; }
-finally { await writeFile(path.join(dir, 'result.json'), JSON.stringify(result, null, 2)); await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+finally { await writeFile(path.join(dir, 'result.json'), JSON.stringify(result, null, 2)); await browser.close(); await server.close(); }

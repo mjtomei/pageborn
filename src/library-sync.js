@@ -1,5 +1,6 @@
 import { base64ToBytes, bytesToBase64 } from './binary.js';
 import { readLocalFile, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
+import { libraryTimestamp } from './library-order.js';
 
 const CHUNK_BYTES = 768 * 1024, encoder = new TextEncoder();
 const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
@@ -44,7 +45,9 @@ export async function downloadLibraryFile(client, file, signal, progress = () =>
     bytes.set(data, offset); offset += data.length;
   }
   if (await digest(bytes) !== file.sha256) throw new Error('Document checksum mismatch. Sync again.');
-  return readLocalFile(new File([bytes], file.name));
+  return { ...await readLocalFile(new File([bytes], file.name)),
+    ...(libraryTimestamp(file.addedAt) ? { addedAt: file.addedAt } : {}),
+    ...(libraryTimestamp(file.modifiedAt) ? { modifiedAt: file.modifiedAt } : {}) };
 }
 function conflictName(name, sha256, used) {
   const dot = name.lastIndexOf('.'), ext = name.slice(dot); let stem = name.slice(0, dot);
@@ -109,6 +112,20 @@ export async function syncLibrary({ client, snapshot, store, saved = {}, saveSta
     await persist();
   };
   await commitState();
+  // Backfill dates for already-synced originals without transferring or
+  // rewriting PDF bodies, resetting their caches, or reopening the reader.
+  const dates = remote.files.flatMap(file => {
+    const expected = current.documents.find(doc => doc.id === file.name);
+    if (!expected || !localFiles.some(local => local.name === file.name && local.sha256 === file.sha256)) return [];
+    const addedAt = libraryTimestamp(file.addedAt)
+      ? Math.min(file.addedAt, libraryTimestamp(expected.addedAt) || Infinity) : 0;
+    if (!(addedAt && addedAt !== expected.addedAt)
+      && !(libraryTimestamp(file.modifiedAt) && file.modifiedAt !== expected.modifiedAt)) return [];
+    return [{ id: file.name, addedAt: file.addedAt, modifiedAt: file.modifiedAt, expected }];
+  });
+  if (dates.length && store.updateDates) {
+    const result = await store.updateDates(dates); current = result.snapshot; await changed(result, null);
+  }
   for (const action of actions) {
     signal?.throwIfAborted(); progress(`Syncing ${action.name}…`);
     const doc = current.documents.find(d => d.id === action.name);

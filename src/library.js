@@ -1,4 +1,5 @@
 import { bytesToBase64 } from './binary.js';
+import { libraryTimestamp } from './library-order.js';
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_PDF_BYTES = 16 * 1024 * 1024;
@@ -19,6 +20,8 @@ export function localSnapshot(saved) {
     bytes: doc.bytes ?? encoder.encode(doc.content).length,
     words: doc.words ?? countWords(doc.content),
     positionKey: doc.positionKey || `${saved?.server || 'local'}\n${doc.id}`,
+    ...(libraryTimestamp(doc.addedAt) ? { addedAt: doc.addedAt } : {}),
+    ...(libraryTimestamp(doc.modifiedAt) ? { modifiedAt: doc.modifiedAt } : {}),
     ...(doc.format === 'pdf' ? { format: 'pdf' } : {}),
   })) };
 }
@@ -67,7 +70,8 @@ export function addDocument(saved, document) {
   const dot = document.id.lastIndexOf('.');
   let id = document.id;
   for (let n = 2; used.has(id); n++) id = `${document.id.slice(0, dot)} (${n})${document.id.slice(dot)}`;
-  const added = { ...document, id, positionKey: `local\n${id}` };
+  const added = { ...document, id, positionKey: `local\n${id}`,
+    addedAt: libraryTimestamp(document.addedAt) || Date.now() };
   snapshot.documents.push(added);
   return { snapshot, document: added };
 }
@@ -81,9 +85,23 @@ export function replaceDocument(saved, document, expected) {
   const result = addDocument({ documents }, document);
   result.document.positionKey = prior?.positionKey || document.positionKey || `local\n${document.id}`;
   if (prior) {
+    // Replacing content is not a new addition, including legacy undated files.
+    result.document.addedAt = Math.min(libraryTimestamp(prior.addedAt) || Infinity,
+      libraryTimestamp(document.addedAt) || Infinity);
+    if (!Number.isFinite(result.document.addedAt)) delete result.document.addedAt;
     result.snapshot.documents = snapshot.documents.map(doc => doc.id === prior.id ? result.document : doc);
   }
   return result;
+}
+export function updateDocumentDates(saved, updates) {
+  const snapshot = localSnapshot(saved);
+  for (const update of updates) {
+    const doc = snapshot.documents.find(doc => doc.id === update.id);
+    if (!doc || doc.content !== update.expected.content || doc.format !== update.expected.format) continue;
+    if (libraryTimestamp(update.addedAt)) doc.addedAt = Math.min(libraryTimestamp(doc.addedAt) || Infinity, update.addedAt);
+    if (libraryTimestamp(update.modifiedAt)) doc.modifiedAt = update.modifiedAt;
+  }
+  return { snapshot };
 }
 export function assertDocumentUnchanged(prior, expected) {
   if (!!prior !== !!expected || prior && (prior.content !== expected.content || prior.format !== expected.format)) {
@@ -136,6 +154,7 @@ export class LocalLibrary {
     return this.update(snapshot => addDocument(snapshot, document));
   }
   async put(document, expected) { return this.update(snapshot => replaceDocument(snapshot, document, expected)); }
+  async updateDates(updates) { return this.update(snapshot => updateDocumentDates(snapshot, updates)); }
   async remove(id, expected = undefined) {
     return this.update(snapshot => {
       if (expected !== undefined) assertDocumentUnchanged(snapshot.documents.find(doc => doc.id === id), expected);

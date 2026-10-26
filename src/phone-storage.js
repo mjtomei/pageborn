@@ -1,4 +1,4 @@
-import { addDocument, replaceDocument, assertDocumentUnchanged, localSnapshot, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
+import { addDocument, replaceDocument, updateDocumentDates, assertDocumentUnchanged, localSnapshot, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
 
 export const STORAGE_PREFIX = 'even-reader:phone:v1';
 export const CHUNK_CHARS = 32000;
@@ -125,12 +125,26 @@ export class PhoneLibrary {
     return this.snapshot;
   }
   put(document, expected) { return this.save(document, () => {}, false, expected); }
+  updateDates(updates) {
+    return this.serialize(async () => {
+      const result = updateDocumentDates(this.snapshot, updates);
+      await this.commit({ ...this.catalog, documents: this.catalog.documents.map(meta => {
+        const { content, ...doc } = result.snapshot.documents.find(doc => doc.id === meta.id);
+        return { ...meta, ...doc };
+      }) });
+      this.snapshot = result.snapshot;
+      return result;
+    });
+  }
   save(document, onProgress = () => {}, migrating = false, expected = undefined) {
     return this.serialize(async () => {
       await this.recover();
       const old = expected !== undefined ? this.catalog.documents.find(doc => doc.id === document.id) : null;
       const result = expected !== undefined ? replaceDocument(this.snapshot, document, expected) : addDocument(this.snapshot, document);
-      if (migrating) result.document.positionKey = document.positionKey;
+      if (migrating) {
+        result.document.positionKey = document.positionKey;
+        if (!document.addedAt) delete result.document.addedAt;
+      }
       const chunks = chunksOf(result.document.content);
       const nonce = Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
       const body = descriptor(`${STORAGE_PREFIX}:doc:${nonce}`, result.document.content, chunks);

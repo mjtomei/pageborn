@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile, readdir, symlink, link, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, readdir, symlink, link, mkdir, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -14,6 +14,7 @@ import { paperAttachments, syncPaperFiles } from '../src/ask-documents.js';
 import { nativeLayout } from '../src/native-text.js';
 import { parseDocument } from '../src/document.js';
 import { EvenTerminal } from '../src/ask-terminal.js';
+import { orderedDocuments } from '../src/library-order.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const document = (name, content) => readLocalFile(new File([content], name));
@@ -306,4 +307,28 @@ test('stock Terminal produces a clear optional-feature error without file mutati
   const f = await fixture(t); const client = { api(route, options) { assert.equal(route, 'pageborne/library'); assert.equal(options.body, undefined); throw Object.assign(new Error('Not found'), { status: 404 }); } };
   await assert.rejects(f.sync({ client }), /updated Pageborne extension/);
   assert.equal(f.calls.length, 0);
+});
+
+test('sync backfills original addition dates without downloading bodies or reloading the active PDF', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.libraryDir, 'older.txt'), 'Older');
+  await new Promise(resolve => setTimeout(resolve, 15));
+  await writeFile(path.join(f.libraryDir, 'newer.txt'), 'Newer');
+  const old = new Date('2000-01-01');
+  await utimes(path.join(f.libraryDir, 'newer.txt'), old, old);
+  await f.sync();
+  const manifest = await libraryManifest({}, f.options);
+  for (const doc of f.store.snapshot.documents) {
+    assert.equal(doc.addedAt, manifest.files.find(file => file.name === doc.id).addedAt);
+    delete doc.addedAt; delete doc.modifiedAt; // Legacy snapshot, bodies already synced.
+  }
+  f.calls.length = 0; const changes = [];
+  await f.sync({ changed: async (_result, id) => changes.push(id) });
+  assert.deepEqual(changes, [null], 'date-only refresh must not reopen a document');
+  assert.ok(!f.calls.some(call => /\/(read|chunk)$/.test(call.route)));
+  const reopened = new PhoneLibrary(f.kv); await reopened.read();
+  assert.deepEqual(reopened.snapshot, f.store.snapshot);
+  const docs = reopened.snapshot.documents;
+  const added = docs.find(doc => doc.id === 'newer.txt').addedAt;
+  assert.deepEqual(orderedDocuments(docs, { openedAt: { 'older.txt': added - 1 } }).map(doc => doc.id), ['newer.txt', 'older.txt']);
 });

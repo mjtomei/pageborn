@@ -48,6 +48,12 @@ test('saved geometry keeps native pages, figures and exact source anchors throug
   const invalid = JSON.parse(encoded); invalid.layout.blocks[0].scale = null;
   assert.throws(() => unpackPdfPreparation(invalid), /incomplete/);
   assert.throws(() => unpackPdfPreparation({}), /incomplete/);
+  const longBook = JSON.parse(encoded);
+  longBook.pageScales = longBook.pageScales.map(([page, scale]) => [page === 2 ? 450 : page, scale]);
+  for (const block of longBook.layout.blocks) if (block.page === 2) block.page = 450;
+  assert.ok(unpackPdfPreparation(longBook).layout.blocks.some(block => block.page === 450));
+  longBook.pageScales.push([1001, 1]);
+  assert.throws(() => unpackPdfPreparation(longBook), /incomplete/);
 });
 
 test('preparation survives SDK-only restart, uses bounded chunks and replaces the same document', async () => {
