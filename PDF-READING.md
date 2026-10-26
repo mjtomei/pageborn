@@ -74,7 +74,7 @@ Contents lists original PDF pages. Search uses embedded text and, when reflow is
 
 ## Limits and implementation
 
-PDFs may be up to 16 MiB and 300 pages; the total library limit is 64 MiB. Password-protected PDFs need their password removed first. Blank/unrenderable documents show an error. Geometry cannot establish author-intended order for every PDF: unusual sidebars, three or more columns, dense diagrams, overlapping objects and scans can confuse automatic layout. Inspect the browser preview and use the layout override when needed.
+PDFs may be up to 16 MiB and 1,000 pages; the total library limit is 64 MiB. Password-protected PDFs need their password removed first. Blank/unrenderable documents show an error. Geometry cannot establish author-intended order for every PDF: unusual sidebars, three or more columns, dense diagrams, overlapping objects and scans can confuse automatic layout. Inspect the browser preview and use the layout override when needed.
 
 A short, left-aligned heading between two separate sets of columns can look like a heading inside the left column. This remains visible on page 18 of the Coherence magazine: its final references subsection begins before the preceding right-column references finish. Publisher headers/footers and scan artifacts can also interrupt reading. Keeping a dense table or figure intact does not guarantee that its smallest labels will be legible at 576 pixels; there is no horizontal zoom/pan yet.
 
