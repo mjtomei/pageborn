@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AskChat } from '../src/ask-chat.js';
-import { AskConversation } from '../src/ask-conversation.js';
-import { boundedActivities } from '../src/ask-activity.js';
+import { AskConversation, MESSAGE_WIDTH } from '../src/ask-conversation.js';
+import { boundedActivities, chatMessages } from '../src/ask-activity.js';
 import { conversationTurns } from '../integrations/even-terminal/pageborne-conversation.js';
 import { bodyTextObjects, pageDefinition, reviewPageDefinition, modePageDefinition } from '../src/glasses.js';
-import { LINE_HEIGHT, byteLength, TEXT_BYTES } from '../src/native-text.js';
+import { LINE_HEIGHT, byteLength, TEXT_BYTES, measureNativeText } from '../src/native-text.js';
 
 const activity = (id, text = 'Read agents.md', state = 'pending') => ({ id, kind: 'tool', text, state });
 
@@ -32,7 +32,8 @@ test('late activity preserves glasses answer anchor and creates no assistant rea
   turns[0].activities = [activity('read'), { id: 'thinking', kind: 'thinking', text: 'Checking sources. '.repeat(20), state: 'complete' }];
   frame = view.update(turns, frame.y);
   assert.deepEqual(view.anchor(frame.y), anchor); assert.equal(view.window(frame.y).content, before);
-  frame = view.update(turns, frame.y, 'one:activity:thinking');
+  assert(!view.messages.some(m => m.key.endsWith(':thinking')));
+  frame = view.update(turns, frame.y, 'one:activity:read');
   const window = view.window(frame.y);
   assert(window.alignments.includes('activity'));
   assert(window.readReceipts.every(r => r.prefix === turns[0].answer.replace(/\s/g, '').slice(0, r.end)));
@@ -55,7 +56,7 @@ test('native activity has its own dim layer, with bright answers and bounded rev
 });
 
 test('activity is bounded independently and the server does not expose arbitrary tool payloads', () => {
-  const values = Array.from({ length: 100 }, (_, i) => ({ id: String(i), kind: 'thinking', text: 'x'.repeat(2000), state: 'complete' }));
+  const values = Array.from({ length: 100 }, (_, i) => ({ id: String(i), kind: 'tool', text: 'x'.repeat(2000), state: 'complete' }));
   const bounded = boundedActivities(values);
   assert(bounded.length <= 24); assert(bounded.reduce((n, a) => n + a.text.length, 0) <= 4000);
   assert.equal(bounded.at(-1).id, '99');
@@ -65,4 +66,40 @@ test('activity is bounded independently and the server does not expose arbitrary
     ...values.map(a => ({ ...a, type: 'activity' })), { id: 'a', type: 'agentMessage', text: 'Answer' }] }]);
   assert.doesNotMatch(JSON.stringify(turns), /SECRET/); assert.equal(turns[0].answer, 'Answer');
   assert(turns[0].activities.reduce((n, a) => n + a.text.length, 0) <= 4000);
+});
+
+test('saved and incoming thinking entries disappear without losing actions, answers or live progress', () => {
+  const thoughts = Array.from({ length: 30 }, (_, i) => ({ id: `think-${i}`, kind: 'thinking', text: 'Checking sources.', state: 'complete' }));
+  const remote = { id: 'remote', question: 'Question', answer: 'Answer', state: 'complete', activities: [activity('read'), ...thoughts] };
+  let stored = { p: [remote] };
+  const chat = new AskChat(() => stored, value => { stored = structuredClone(value); });
+  assert.deepEqual(chat.turns('p')[0].activities, [activity('read')]);
+  chat.persist('p'); assert(!JSON.stringify(stored).includes('Checking sources.'));
+  chat.mergeConversation('p', 's', [remote], { baseline: true });
+  const turn = chat.turns('p').find(t => t.remoteId === 'remote');
+  assert.deepEqual(turn.activities, [activity('read')]);
+  assert.deepEqual(chatMessages(turn).map(m => m.text), ['Question', 'Tool: Read agents.md', 'Answer']);
+  const pending = chatMessages({ question: 'Question', state: 'pending', activities: thoughts });
+  assert.equal(pending.find(m => m.role === 'activity').text, 'Working…');
+  assert.equal(chatMessages({ ...remote, activities: thoughts }).filter(m => m.role === 'activity').length, 0);
+});
+
+test('native actions fit exactly one line including ellipsis and preserve literal command syntax', () => {
+  for (const state of ['pending', 'complete', 'error']) {
+    for (const text of ['Read agents.md', 'Shell echo <file> && cat __x__',
+      'Shell ' + 'W'.repeat(48) + '…', 'Shell ' + 'i'.repeat(120), 'Read ' + '文😀'.repeat(30),
+      'Shell echo first\nsecond\tthird', 'Shell ' + 'very-long-file_name/'.repeat(10)]) {
+      const view = new AskConversation();
+      view.update([{ id: 'one', question: 'Question', answer: 'Answer', state, activities: [activity('command', text, state)] }], 0, 'latest');
+      const message = view.messages.find(m => m.role === 'activity');
+      assert.equal(message.rows.length, 1, text);
+      const line = message.rows[0].text;
+      assert(measureNativeText(line) <= MESSAGE_WIDTH, line);
+      assert(byteLength(line) < TEXT_BYTES); assert(!/\n|\t|…{2}/.test(line));
+      const full = message.text.replace(/\s+/g, ' ').trim();
+      if (measureNativeText(full) <= MESSAGE_WIDTH) assert.equal(line, full);
+      else { assert(line.endsWith('…')); assert(full.startsWith(line.slice(0, -1))); }
+      if (text.includes('<file>')) assert(line.includes('<file>') && line.includes('__x__'));
+    }
+  }
 });

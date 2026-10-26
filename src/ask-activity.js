@@ -2,10 +2,12 @@
 export function boundedActivities(value) {
   if (!Array.isArray(value)) return [];
   const kept = [], ids = new Set(); let size = 0;
-  for (const item of value.slice(-24).reverse()) {
+  // Drop thinking from older saved chats as well as incoming snapshots, before
+  // applying the tool budget so hidden entries cannot displace useful actions.
+  for (const item of value.filter(item => item?.kind !== 'thinking').slice(-24).reverse()) {
     if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id)
-      || !['tool', 'thinking', 'status'].includes(item.kind) || typeof item.text !== 'string') continue;
-    const text = item.text.trim().slice(0, item.kind === 'thinking' ? 800 : 200);
+      || !['tool', 'status'].includes(item.kind) || typeof item.text !== 'string') continue;
+    const text = item.text.trim().slice(0, 200);
     if (!text || size + text.length > 4000) continue;
     size += text.length; ids.add(item.id);
     kept.unshift({ id: item.id.slice(0, 300), kind: item.kind, text,
@@ -19,8 +21,7 @@ export function chatMessages(turn) {
   const messages = [{ key: 'user', role: 'user', text: turn.question || '' }];
   for (const item of activity) {
     const pending = item.state === 'pending' && turn.state === 'pending';
-    const prefix = item.kind === 'thinking' ? (pending ? 'Thinking' : 'Thought')
-      : item.kind === 'status' ? '' : item.state === 'error' ? 'Failed' : pending ? 'Running' : 'Tool';
+    const prefix = item.kind === 'status' ? '' : item.state === 'error' ? 'Failed' : pending ? 'Running' : 'Tool';
     messages.push({ key: `activity:${item.id}`, role: 'activity', text: prefix ? `${prefix}: ${item.text}` : item.text });
   }
   if (!activity.length && turn.state === 'pending' && !turn.answer)

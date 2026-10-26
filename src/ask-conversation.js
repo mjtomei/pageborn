@@ -1,5 +1,5 @@
 import { getTextWidth } from '@evenrealities/pretext';
-import { nativeLayout, LINE_HEIGHT, VISIBLE_LINES, byteLength, TEXT_BYTES } from './native-text.js';
+import { nativeLayout, LINE_HEIGHT, VISIBLE_LINES, byteLength, TEXT_BYTES, measureNativeText } from './native-text.js';
 import { parseDocument, rowAt, WIDTH, MARGIN } from './document.js';
 import { chatMessages } from './ask-activity.js';
 
@@ -7,6 +7,18 @@ const RIGHT_EDGE = WIDTH - 2 * MARGIN - 8;
 export const MESSAGE_WIDTH = RIGHT_EDGE - 64;
 const alignQuestion = text => text.trim() ? ' '.repeat(Math.max(0,
   Math.floor((RIGHT_EDGE - getTextWidth(text)) / getTextWidth(' ')))) + text : '';
+
+function activityRows(text) {
+  let line = text.replace(/\s+/g, ' ').trim();
+  if (measureNativeText(line) > MESSAGE_WIDTH) {
+    const chars = Array.from(line.replace(/(?:…|\.{3})$/, ''));
+    while (chars.length && measureNativeText(chars.join('').trimEnd() + '…') > MESSAGE_WIDTH) chars.pop();
+    line = chars.join('').trimEnd() + '…';
+  }
+  // Tool summaries are literal text. Parsing shell syntax as Markdown can
+  // strip filenames, angle brackets or underscores from a command.
+  return nativeLayout({ blocks: [{ index: 0, text: line, kind: 'activity', sourceLine: 1 }] }, 0, { width: MESSAGE_WIDTH }).rows;
+}
 
 // Display history is independent of the shorter context sent to providers.
 // Measured spaces use the same native-text alignment as speed reading: the
@@ -22,7 +34,7 @@ export class AskConversation {
       const key = `${turn.id}:${entry.key}`;
       const previous = this.cache.get(key);
       const message = previous?.text === text ? previous : {
-        key, role, text, rows: nativeLayout(parseDocument(text), 0, { width: MESSAGE_WIDTH }).rows
+        key, role, text, rows: (role === 'activity' ? activityRows(text) : nativeLayout(parseDocument(text), 0, { width: MESSAGE_WIDTH }).rows)
           .map(row => ({ ...row, text: role === 'user' ? alignQuestion(row.text) : row.text })),
       };
       if (message !== previous) {

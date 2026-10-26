@@ -23,7 +23,7 @@ const app = express(); app.use(express.json({ limit: '2mb' }));
 const api = express.Router(); installLibrarySync(api, options); installReaderState(api, options);
 let turns = [{ id: 'question-1', question: 'What is the main idea?', answer: 'The answer from the existing desktop session.', state: 'complete' }];
 turns[0].activities = [{ id: 'thinking', kind: 'thinking', text: 'Checking the relevant passage.', state: 'complete' },
- { id: 'tool', kind: 'tool', text: 'Read paper.md', state: 'complete' }];
+ { id: 'tool', kind: 'tool', text: 'Read paper.md and inspect the document using this command with a longer description that needs truncation…', state: 'complete' }];
 let busy = false, prompts = [], messages = [];
 api.get('/info', (_req,res) => res.json({ pageborne: { conversationSync: 1, librarySync: 1 } }));
 api.get('/pageborne/conversation', (req,res) => res.json({ version: 1, sessionId: req.query.sessionId, state: busy ? 'busy' : 'idle', turns }));
@@ -82,7 +82,13 @@ try {
     await page.screenshot({path:`test-results/web-reader/${engine.name()}-${viewport.width}-reader.png`});
     await page.locator('#web-nearby').click();
     await expect(page.locator('#web-chat-dialog')).toBeVisible();
-    await expect(page.locator('.ask-message-activity')).toHaveCount(2);
+    await expect(page.locator('.ask-message-activity')).toHaveCount(1);
+    await expect(page.locator('#ask-messages')).not.toContainText('Checking the relevant passage.');
+    const action = await page.locator('.ask-message-activity .ask-message-text').evaluate(el => ({
+      height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight),
+      overflow: getComputedStyle(el).textOverflow, width: el.clientWidth, contentWidth: el.scrollWidth }));
+    assert(action.height <= action.line + 1); assert.equal(action.overflow, 'ellipsis');
+    assert(action.contentWidth > action.width);
     assert.notEqual(await page.locator('.ask-message-activity').first().evaluate(el => getComputedStyle(el).color),
       await page.locator('.ask-message-assistant').first().evaluate(el => getComputedStyle(el).color));
     await expect(page.locator('#ask-messages')).toContainText('existing desktop session');

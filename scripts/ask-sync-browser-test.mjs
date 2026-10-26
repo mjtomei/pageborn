@@ -19,7 +19,7 @@ try {
     const turns = Array.from({ length: 12 }, (_, n) => ({ id: `remote-${n}`, question: `Mobile question ${n}?`, answer: `Mobile answer ${n}.`, state: 'complete' }));
     turns[11].activities = [
       { id: 'think', kind: 'thinking', text: 'Checking the relevant file.', state: 'complete' },
-      { id: 'read', kind: 'tool', text: 'Read agents.md', state: 'complete' },
+      { id: 'read', kind: 'tool', text: 'Read agents.md and inspect the implementation with a lengthy command…', state: 'complete' },
     ];
     let offline = false, delayed;
     try {
@@ -81,7 +81,15 @@ try {
       assert.notEqual(await page.evaluate(() => window.__askUI.footerStatus()), 'Unread reply');
       await page.evaluate(() => window.__askUI.open()); await stopped();
       await expect.poll(body).toContain('Mobile answer 11.'); assert(!(await body()).includes('Mobile question 0?'));
-      await expect(page.locator('.ask-message-activity')).toHaveCount(2);
+      await expect(page.locator('.ask-message-activity')).toHaveCount(1);
+      await expect(page.locator('#ask-messages')).not.toContainText('Checking the relevant file.');
+      const activityRows = await page.evaluate(() => window.__askUI.session.conversation.messages.filter(m => m.role === 'activity').flatMap(m => m.rows.map(r => r.text)));
+      assert.equal(activityRows.length, 1); assert(activityRows[0].endsWith('…'));
+      const phoneAction = await page.locator('.ask-message-activity .ask-message-text').evaluate(el => ({
+        height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight),
+        overflow: getComputedStyle(el).textOverflow, width: el.clientWidth, contentWidth: el.scrollWidth }));
+      assert(phoneAction.height <= phoneAction.line + 1); assert.equal(phoneAction.overflow, 'ellipsis');
+      assert(phoneAction.contentWidth > phoneAction.width);
       await expect.poll(() => page.evaluate(() => window.__nativeBoxes.activity?.textColor)).toBe(1);
       assert.equal(await page.evaluate(() => window.__nativeBoxes.body.textColor), 4);
       assert.match(await page.evaluate(() => window.__nativeBoxes.activity.content), /Read agents.md/);
