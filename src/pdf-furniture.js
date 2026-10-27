@@ -21,10 +21,71 @@ function edgeRows(page) {
   });
 }
 
+function rowMask(page, row) {
+  const first = Math.min(...row.parts.map(t => t.y)), last = Math.max(...row.parts.map(bottom));
+  const padding = Math.max(4, Math.min(12, row.height * .75));
+  let top = Math.max(0, first - padding), low = Math.min(page.height, last + padding);
+  // Clear scanned glyphs outside their OCR boxes, bounded by adjacent prose.
+  for (const other of page.text) {
+    if (row.parts.includes(other)) continue;
+    if (bottom(other) <= first) top = Math.max(top, bottom(other));
+    else if (other.y >= last) low = Math.min(low, other.y);
+  }
+  return low > top ? { x: 0, y: top, width: page.width, height: low - top } : null;
+}
+
+function numberedHead(row, page) {
+  const words = row.parts.flatMap(part => part.words?.length ? part.words : [part]).sort((a, b) => a.x - b.x);
+  const first = words[0], last = words.at(-1);
+  const leading = /^\d{1,5}$/.test(first?.text.trim()), trailing = /^\d{1,5}$/.test(last?.text.trim());
+  if (words.length < 2 || leading === trailing) return null;
+  const folio = leading ? first : last, title = leading ? words.slice(1) : words.slice(0, -1);
+  const gap = leading ? title[0].x - folio.x - folio.width : folio.x - lastRight(title);
+  const label = title.map(word => word.text).join(' ').trim();
+  // A detached folio at the page edge is stronger evidence than a heading
+  // like “4. Results”. Never classify a numbered section by its string alone.
+  if (gap < Math.max(row.height * 3, page.width * .04) || folio.width > page.width * .12
+    || !/^[\p{L}\s,'’:&–—-]+$/u.test(label) || (label.match(/\p{L}+/gu) || []).length < 2
+    || label.length < 8 || label.length > 100) return null;
+  const body = page.text.filter(box => box.y > page.height * .12 && bottom(box) < page.height * .88
+    && box.text.length > 35 && box.width > page.width * .35 && box.height > 0 && box.height < page.height * .04);
+  const sizes = body.map(box => box.height).sort((a, b) => a - b);
+  if (body.length < 3 || row.height > sizes[Math.floor(sizes.length / 2)] * 1.25) return null;
+  return signature(label);
+}
+
+function lastRight(boxes) { return Math.max(...boxes.map(box => box.x + box.width)); }
+
 export function repeatedPdfTextMasks(pages) {
   const masks = pages.map(() => []);
-  if (pages.length < 3) return masks;
   const rows = pages.map(edgeRows);
+  const hidden = pages.map(() => new Set());
+  const hide = (index, row) => {
+    if (hidden[index].has(row)) return;
+    const mask = rowMask(pages[index], row);
+    if (mask) { masks[index].push(mask); hidden[index].add(row); }
+  };
+  // Partial preparation may have only a chapter opener and its first running
+  // head. Match that already-read title (or an alternating numbered head),
+  // without waiting for many more OCR pages. Only the numbered edge row is
+  // removed; the real chapter title remains in the reading stream.
+  const titles = new Map();
+  for (const [index, page] of pages.entries()) {
+    const add = (key, height) => {
+      if (!key) return;
+      const entries = titles.get(key) || []; entries.push({ index, height }); titles.set(key, entries);
+    };
+    for (const row of rows[index]) add(numberedHead(row, page), row.height / page.height);
+    for (const row of pdfTextRows(page.text.filter(box => box.y >= page.height * .12 && bottom(box) < page.height * .5))) {
+      if (row.text.length < 8 || row.text.length > 100 || !/^[\p{L}\s,'’:&–—-]+$/u.test(row.text)) continue;
+      add(signature(row.text), Math.max(...row.items.map(item => item.height)) / page.height);
+    }
+  }
+  for (const [index, pageRows] of rows.entries()) for (const row of pageRows) {
+    const key = numberedHead(row, pages[index]);
+    if (key && titles.get(key)?.some(other => other.index !== index && other.height >= row.height / pages[index].height * .8)) hide(index, row);
+  }
+  if (pages.length < 3) return masks;
   const groups = [];
   for (const [index, pageRows] of rows.entries()) for (const row of pageRows) {
     if (!row.signature) continue;
@@ -36,20 +97,7 @@ export function repeatedPdfTextMasks(pages) {
   const minimum = Math.max(2, Math.min(6, Math.ceil(pages.length * .3)));
   for (const group of groups) {
     if (group.pages.size < minimum) continue;
-    for (const { index, row } of group.rows) {
-      const page = pages[index];
-      const first = Math.min(...row.parts.map(t => t.y)); const last = Math.max(...row.parts.map(bottom));
-      const padding = Math.max(4, Math.min(12, row.height * .75));
-      let top = Math.max(0, first - padding); let low = Math.min(page.height, last + padding);
-      // Mask the entire recurring row, since scanned glyphs can fall outside
-      // their embedded OCR boxes. Neighboring body/footnote lines limit the band.
-      for (const other of page.text) {
-        if (row.parts.includes(other)) continue;
-        if (bottom(other) <= first) top = Math.max(top, bottom(other));
-        else if (other.y >= last) low = Math.min(low, other.y);
-      }
-      if (low > top) masks[index].push({ x: 0, y: top, width: page.width, height: low - top });
-    }
+    for (const { index, row } of group.rows) hide(index, row);
   }
   // Manuscript repositories print a vertical status watermark in a narrow
   // outside lane. It is not a short horizontal running head, and leaving its

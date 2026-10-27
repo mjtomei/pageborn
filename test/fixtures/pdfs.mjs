@@ -78,6 +78,14 @@ export function pdfFixture(kind = 'mixed') {
     paragraph('FinalBody', 55, 85, true, 18);
     text('635', 280, 742, 11);
     pages.push(commands.join('\n'));
+  } else if (kind === 'chapter-running-head') {
+    for (let n = 1; n <= 4; n++) {
+      commands = [];
+      if (n === 1) text('A RIVER JOURNEY', 180, 170, 20);
+      if (n === 2) { text('4', 55, 45, 11); text('A RIVER JOURNEY', 210, 45, 11); }
+      paragraph(`ChapterPage${n}`, 55, n === 1 ? 230 : 130, true, 12);
+      pages.push(commands.join('\n'));
+    }
   } else if (kind === 'repeated-text') {
     for (let n = 0; n < 8; n++) {
       commands = [];

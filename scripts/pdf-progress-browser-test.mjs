@@ -188,6 +188,25 @@ try {
   await page.locator('[data-document-id="long-book.pdf"] .document-card').click(); await waitForPdfReady(page, 120000);
   assert.equal((await diag()).pdf.cached, true);
   result.longBookAndCache = true;
+  await page.evaluate(() => { window.__gate = 'page'; window.__holdFrom = 1; window.__held = 0; });
+  await page.locator('#file-picker').setInputFiles({ name: 'chapter.pdf', mimeType: 'application/pdf', buffer: pdfFixture('chapter-running-head') });
+  await showLibrary(page); await page.locator('[data-document-id="chapter.pdf"] .document-card').click(); await partial(1);
+  await page.evaluate(() => window.__release(3)); await partial(3);
+  const chapterText = () => page.evaluate(() => (window.__displayFrame?.layout?.blocks || []).map(b => ({ page: b.page, text: b.text })));
+  await expect.poll(async () => (await chapterText()).some(b => b.page === 2 && /ChapterPage2Start/.test(b.text))).toBe(true);
+  await expect.poll(async () => (await chapterText()).some(b => b.page === 2 && /JOURNEY/.test(b.text))).toBe(false);
+  assert.ok((await chapterText()).some(b => b.page === 1 && /A RIVER JOURNEY/.test(b.text)), 'real chapter title remains');
+  assert.ok((await chapterText()).some(b => b.page === 2 && /ChapterPage2Start/.test(b.text)), 'body after the running header remains');
+  await page.evaluate(() => window.__release()); await waitForPdfReady(page);
+  await page.reload(); await waitForPdfReady(page);
+  assert.equal((await diag()).pdf.cached, true);
+  await expect.poll(async () => (await chapterText()).some(b => b.page === 2 && /ChapterPage2Start/.test(b.text))).toBe(true);
+  await expect.poll(async () => (await chapterText()).some(b => b.page === 2 && /JOURNEY/.test(b.text))).toBe(false);
+  result.runningHeadRemovedDuringPartialAndCachedReading = true;
+  await page.evaluate(() => window.__release()); // Reload reinstalls the test's pause gate.
+  await showTool(page, 'pdf'); await page.locator('#pdf-repeated-text').check(); await waitForPdfReady(page);
+  await expect.poll(async () => (await chapterText()).some(b => b.page === 2 && /JOURNEY/.test(b.text))).toBe(true);
+  result.explicitKeepHeadersHonored = true;
   assert.deepEqual(result.errors, []); result.passed = true;
   console.log('PASS: reading during stalled preparation, growing preview, exact word and source position, cache completion, late-page restoration and cancellation.');
 } catch (error) { result.error = error.stack; result.diagnostic = await diag().catch(() => null); throw error; }

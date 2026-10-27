@@ -14,6 +14,48 @@ const pages = () => Array.from({ length: 8 }, (_, i) => ({ width: 600, height: 8
   line('Archive terms apply.', 758),
 ] }));
 
+function chapterPages() {
+  const body = [180, 205, 230, 255].map(y => line('A long body passage that continues the chapter discussion.', y));
+  const title = line('SEARCH FOR THE PUBLIC', 150, 150, 330, 20);
+  const words = [line('4', 47, 60, 10, 12), line('SEARCH', 45, 220, 70, 14), line('FOR', 45, 300, 30, 14),
+    line('THE', 45, 340, 30, 14), line('PUBLIC', 45, 380, 80, 14)];
+  const head = { ...line('4 SEARCH FOR THE PUBLIC', 45, 60, 400, 14), words };
+  return [{ width: 600, height: 800, text: [title, ...body] }, { width: 600, height: 800, text: [head, ...body] }];
+}
+
+test('the first numbered running head is removed using the chapter title in a partial prefix', () => {
+  const input = chapterPages(); const masks = repeatedPdfTextMasks(input);
+  assert.equal(insidePdfMargin(input[1].text[0], masks[1]), true);
+  assert.equal(insidePdfMargin(input[0].text[0], masks[0]), false, 'keep the actual chapter opening');
+  assert.ok(input.every((page, i) => page.text.slice(1).every(box => !insidePdfMargin(box, masks[i]))));
+  assert.deepEqual(repeatedPdfTextMasks([input[1]]), [[]], 'a lone numbered title is not sufficient evidence');
+});
+
+test('alternating folios and footer titles match before the longer repetition threshold', () => {
+  const input = chapterPages(); input.shift();
+  const original = input[0].text[0];
+  const words = [...original.words.slice(1).map(w => ({ ...w, x: w.x - 140 })), line('5', 45, 510, 10, 14)];
+  input.push({ ...input[0], text: [{ ...original, text: 'SEARCH FOR THE PUBLIC 5', words }, ...input[0].text.slice(1)] });
+  assert.ok(repeatedPdfTextMasks(input).every((masks, i) => insidePdfMargin(input[i].text[0], masks)));
+  const footers = chapterPages(); const footer = footers[1].text[0];
+  footers[1].text[0] = { ...footer, y: 745, words: footer.words.map(w => ({ ...w, y: w.y + 700 })) };
+  assert.ok(insidePdfMargin(footers[1].text[0], repeatedPdfTextMasks(footers)[1]));
+  const embedded = chapterPages();
+  embedded[1].text.splice(0, 1, line('4', 47, 60, 10, 12), line('SEARCH FOR THE PUBLIC', 45, 220, 240, 14));
+  const masks = repeatedPdfTextMasks(embedded)[1];
+  assert.ok(embedded[1].text.slice(0, 2).every(box => insidePdfMargin(box, masks)));
+});
+
+test('matching prose, normal numbered sections, oversized chapter headings and small prefixes remain', () => {
+  for (const change of [head => ({ ...head, y: 300, words: head.words.map(w => ({ ...w, y: 300 })) }),
+    head => ({ ...head, text: '4. SEARCH FOR THE PUBLIC', words: head.words.map((w, i) => i ? w : { ...w, text: '4.' }) }),
+    head => ({ ...head, height: 26, words: head.words.map(w => ({ ...w, height: 26 })) }),
+    head => ({ ...head, words: head.words.map((w, i) => i ? w : { ...w, x: 202 }) })]) {
+    const input = chapterPages(); input[1].text[0] = change(input[1].text[0]);
+    assert.equal(insidePdfMargin(input[1].text[0], repeatedPdfTextMasks(input)[1]), false);
+  }
+});
+
 test('recurring edge ornaments disappear without discarding figures, equations, body separators or unique marks', () => {
   const bar = { kind: 'scan', x: 0, y: 110, width: 550, height: 8, lines: [] };
   const content = { kind: 'text', x: 50, y: 200, width: 500, height: 200, lines: [line('Body text', 200)], reflow: { text: 'Body text' } };
