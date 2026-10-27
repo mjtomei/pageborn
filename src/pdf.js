@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { PdfWork } from './pdf-work.js';
 import { reconcilePdfOcr } from './pdf-ocr-consensus.js';
 import { pdfScanMarks, pdfUnderlineBlock } from './pdf-scan-marks.js';
-import { pdfWholePageImage } from './pdf-page-image.js';
+import { pdfWholePageImage, removePdfScanBorderFragments } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -405,6 +405,8 @@ export class PdfDocument {
       analysis.blocks = protectPdfCaptionedExhibits({ ...analysis, width: canvas.width, height: canvas.height });
       endMatter ||= Number.isFinite(pdfEndMatterStart(analysis));
     }
+    if (reflow && needsOcr) analysis.blocks = removePdfScanBorderFragments({ blocks: analysis.blocks,
+      width: canvas.width, height: canvas.height, data: pixels.data });
     const turn = this.pageTurns.get(number);
     if (turn) for (const block of [...analysis.blocks, ...analysis.annotations]) Object.assign(block, { turn, pageRotation: viewport.rotation,
       sourceTransform: pdfSourceTransform(pdfAnalysisViewport(page), viewport) });

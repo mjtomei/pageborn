@@ -32,6 +32,8 @@ Files are stored locally in this browser's IndexedDB. It has its own library, se
 
 ## Reading behavior
 
+Textless scan fragments after readable prose are omitted when all their ink is confined to the outer paper edge. This prevents binding shadows and bottom-edge marks from becoming enlarged empty panes. Fragments with interior ink, recognized text, illustrations and whole-page scans are preserved. The annotation browser regression includes disconnected edge marks and checks that they stay absent after reopening the saved preparation.
+
 Scan reflow compares fresh local OCR with an existing invisible PDF transcript where neighboring words and line positions agree. A conservative postprocessor corrects digit/letter confusions such as `1s` → `is` and low-confidence capitalization. It does not replace whole sentences, change punctuation, infer missing words or blindly spellcheck numbers and acronyms. Image-only scans still use the existing local OCR engine; no second model or remote service is loaded for consensus.
 
 Underlines are treated as marks around the printed words. Recognized prose stays native text; low-confidence rows made from a verified long, thin underline are excluded. Written marks in the outside margins are saved as original image crops in **Written annotations**, separate from reading order and the figures gallery. Open a thumbnail on the phone to inspect it; previews do not move the glasses reading position. Uncertain regions, including handwriting overlapping printed text, may still remain images. Original PDF bytes are unchanged. Completed preparation caches include the annotation crops' locations; existing preparations rebuild once when the recognition version changes.

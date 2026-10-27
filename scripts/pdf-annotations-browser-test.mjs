@@ -52,6 +52,9 @@ try {
     ctx.moveTo(530, 250); ctx.lineTo(532, 220); ctx.lineTo(546, 247); ctx.lineTo(548, 218);
     ctx.moveTo(557, 218); ctx.lineTo(573, 218); ctx.moveTo(565, 218); ctx.lineTo(562, 250);
     ctx.moveTo(523, 270); ctx.lineTo(517, 270); ctx.lineTo(517, 385); ctx.lineTo(525, 385); ctx.stroke();
+    // Disconnected binding/bottom-edge marks below the prose must not become
+    // enlarged empty panes, even when their joint crop spans the whole page.
+    ctx.fillStyle = '#666'; ctx.fillRect(0, 620, 4, 70); ctx.fillRect(0, 730, 4, 70); ctx.fillRect(0, 797, 600, 3);
     const data = ctx.getImageData(0, 0, 600, 800).data, rgb = [];
     for (let i = 0; i < data.length; i += 4) rgb.push(data[i], data[i + 1], data[i + 2]); return rgb;
   });
@@ -73,6 +76,10 @@ try {
     annotationInFigures: [...document.querySelectorAll('#pdf-gallery button')].some(b => b.dataset.figureId.startsWith('annotation:')),
   }));
   assert(result.layout.annotations > 0); assert(result.layout.native > 0);
+  if (!process.env.PDF_SAMPLE) {
+    assert.equal(await page.evaluate(() => __pdfForTest.layout.blocks.filter(b => b.kind === 'scan' && !b.text.trim()).length), 0);
+    result.borderFragmentsRemoved = true;
+  }
   assert.equal(result.layout.annotationInReading, false); assert.equal(result.layout.annotationInFigures, false);
   const gallery = page.locator('#pdf-annotations'), thumbs = gallery.locator('button'), modal = page.locator('#annotation-dialog');
   await expect(thumbs).toHaveCount(result.layout.annotations); await gallery.scrollIntoViewIfNeeded();
@@ -94,6 +101,7 @@ try {
   await page.reload(); await waitForPdfReady(page, 120000);
   await expect(thumbs).toHaveCount(result.layout.annotations);
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('even-reader:diagnostics:v1')).pdf.cached), true);
+  if (!process.env.PDF_SAMPLE) assert.equal(await page.evaluate(() => __pdfForTest.layout.blocks.filter(b => b.kind === 'scan' && !b.text.trim()).length), 0);
   await thumbs.first().click(); await expect(modal.locator('canvas')).toHaveCount(1); await modal.locator('.figure-close').click();
   await showLibrary(page); await page.locator('[data-document-id="plain.md"] .document-card').click();
   await expect(gallery).toBeHidden(); await expect(thumbs).toHaveCount(0); await expect(modal).toBeHidden();

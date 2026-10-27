@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pdfWholePageImage } from '../src/pdf-page-image.js';
+import { pdfWholePageImage, removePdfScanBorderFragments } from '../src/pdf-page-image.js';
 import { createPdfLayout, PDF_SCREEN, pdfPageTurn } from '../src/pdf-layout.js';
 import { pdfGalleryItems } from '../src/pdf-captions.js';
 import { pdfImageFrame } from '../src/pdf-image-frame.js';
@@ -39,4 +39,36 @@ test('scanned paragraphs retain reflow and blank pages do not acquire an image',
   assert.equal(pdfWholePageImage(page), null);
   page.data.fill(0); page.images[0].height = 200;
   assert.equal(pdfWholePageImage(page), null);
+});
+
+test('binding shadows after prose do not turn into several empty reflow panes', () => {
+  const page = scan(); page.data.fill(255);
+  const ink = (x, y, value = 0) => { const i = (y * page.width + x) * 4; page.data.fill(value, i, i + 3); };
+  for (let y = 600; y < 899; y++) ink(1, y);
+  for (let x = 0; x < page.width; x++) ink(x, 899);
+  const body = { x: 60, y: 100, width: 480, height: 400, kind: 'text', text: 'Readable prose. '.repeat(30), lines: [] };
+  const strip = { x: 0, y: 600, width: 5, height: 150, kind: 'scan', text: '', lines: [] };
+  const wide = { ...strip, y: 770, width: 600, height: 130 };
+  const next = { ...pdfWholePageImage({ ...page, text: [] }), number: 2 };
+  const blocks = removePdfScanBorderFragments({ ...page, blocks: [body, strip, wide] });
+  assert.deepEqual(blocks, [body]);
+  const layout = createPdfLayout([{ number: 1, blocks }, next]);
+  assert.equal(layout.blocks.length, 2);
+  assert.equal(pdfPageTurn(layout, layout.pages.at(-2), 1), layout.blocks[1].y);
+  const separateLines = Array.from({ length: 10 }, (_, i) => ({ ...body, y: 100 + i * 25, height: 20, text: 'The printed line remains readable.' }));
+  assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [...separateLines, wide] }), separateLines);
+  // Even a faint interior stroke is evidence to retain the original image.
+  ink(300, 820, 234);
+  assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [body, wide] }), [body, wide]);
+});
+
+test('border cleanup preserves figures, recognized edge text, isolated marks and sparse scans', () => {
+  const page = scan(); page.data.fill(255);
+  const body = { x: 60, y: 100, width: 480, height: 400, kind: 'text', text: 'Readable prose. '.repeat(30), lines: [] };
+  const edge = { x: 0, y: 600, width: 5, height: 150, kind: 'scan', text: '', lines: [] };
+  for (const block of [{ ...edge, kind: 'figure' }, { ...edge, fullPage: true }, { ...edge, text: 'I' },
+    { ...edge, lines: [{ text: 'I' }] }, { ...edge, x: 100 }]) {
+    assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [body, block] }), [body, block]);
+  }
+  assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [edge] }), [edge]);
 });
