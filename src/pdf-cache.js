@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from './pdf-limits.js';
 
 // Increment only when preparation geometry/recognition changes, not on every
 // app release. The full source hash and every PDF formatting option also match.
-export const PDF_PREPARATION_VERSION = 14;
+export const PDF_PREPARATION_VERSION = 15;
 export async function pdfPreparationKey(bytes, options, pdfjsVersion) {
   const hash = await crypto.subtle.digest('SHA-256', bytes);
   return JSON.stringify([PDF_PREPARATION_VERSION, pdfjsVersion,
@@ -36,6 +36,7 @@ export function unpackPdfPreparation(saved) {
       && Number.isFinite(block.x) && Number.isFinite(block.y) && Number.isFinite(block.sourceY)
       && saved.pageScales.some(([page]) => page === block.page) && typeof block.text === 'string' && Array.isArray(block.lines)
       && validTurn(block)
+      && (!block.originalPage || (block.digitizationCredit === true && positive(block.originalPage.width) && positive(block.originalPage.height)))
       && (!block.reflow || (positive(block.reflow.fontSize) && positive(block.reflow.lineHeight)
         && Array.isArray(block.reflow.rows) && block.reflow.rows.every(row => typeof row.text === 'string' && Number.isFinite(row.y)))))) {
     throw new Error('Saved PDF preparation is incomplete.');

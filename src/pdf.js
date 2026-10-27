@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { PdfWork } from './pdf-work.js';
 import { reconcilePdfOcr } from './pdf-ocr-consensus.js';
 import { pdfScanMarks, pdfUnderlineBlock } from './pdf-scan-marks.js';
-import { pdfWholePageImage, removePdfScanBorderFragments } from './pdf-page-image.js';
+import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -323,6 +323,9 @@ export class PdfDocument {
     this.checkpoint('reading-pixels');
     const ctx = canvas.getContext('2d');
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const needsOcr = textPages[number - 1].needsOcr;
+    const blank = reflow && needsOcr && pdfBlankScan({ width: canvas.width, height: canvas.height,
+      data: pixels.data, text: textPages[number - 1].text });
     this.checkpoint('normalizing-colors');
     const colorProfile = normalizeColors ? pdfColorProfile(pixels.data) : null;
     if (normalizeColors) normalizePdfColors(pixels.data, colorProfile);
@@ -344,7 +347,6 @@ export class PdfDocument {
     images.push(...groupPdfDrawings(paths, canvas.width, canvas.height).map(box => ({ ...box, kind: 'drawing' })));
     if (!keepRepeatedText) repeatedMasks[number-1].push(...pdfGraphicFurnitureMasks({ width: canvas.width, height: canvas.height,
       text, images, masks: repeatedMasks[number-1] }));
-    const needsOcr = textPages[number - 1].needsOcr;
     const marks = needsOcr && reflow ? pdfScanMarks({ width: canvas.width, height: canvas.height, data: pixels.data, text })
       : { text, annotations: [], masks: [] };
     text = marks.text;
@@ -354,7 +356,7 @@ export class PdfDocument {
     const input = { width: canvas.width, height: canvas.height,
       data: pixels.data, text: textPages[number - 1].layoutFromOcr ? text : textPages[number - 1].layoutText,
       figureText: text, images, mode: contents.length ? 'single' : mode, keepMarginNotes, pageMasks: [...repeatedMasks[number - 1], ...marks.masks] };
-    let analysis = pdfWholePageImage({ ...input, text: textPages[number - 1].text }) || analyzePdfPage(input);
+    let analysis = pdfWholePageImage({ ...input, text: textPages[number - 1].text, blank, reflow }) || analyzePdfPage(input);
     await this.yieldPreparation();
     if (needsOcr && reflow && analysis.columns && Number.isFinite(analysis.split)) {
       const corrected = splitPdfOcrColumns(text,analysis.split);
@@ -366,7 +368,7 @@ export class PdfDocument {
     // OCR must not turn a few recognized cover words into a new column
     // layout that pulls discarded binding marks back into the reading crop.
     // Keep the scan's pixel geometry and attach recognized text afterward.
-    if (reflow && needsOcr) for (const block of analysis.blocks.filter(block => !block.fullPage)) {
+    if (reflow && needsOcr) for (const block of analysis.blocks.filter(block => !block.fullPage && !block.digitizationCredit)) {
       block.lines = text.filter(t => t.x + t.width / 2 >= block.x && t.x + t.width / 2 < block.x + block.width
         && t.y + t.height / 2 >= block.y && t.y + t.height / 2 < block.y + block.height);
       block.text = block.lines.map(t => t.text).join(' ');
@@ -406,7 +408,9 @@ export class PdfDocument {
       endMatter ||= Number.isFinite(pdfEndMatterStart(analysis));
     }
     if (reflow && needsOcr) analysis.blocks = removePdfScanBorderFragments({ blocks: analysis.blocks,
-      width: canvas.width, height: canvas.height, data: pixels.data });
+      width: canvas.width, height: canvas.height, data: pixels.data,
+      originalData: analysis.blocks.some(block => block.kind === 'scan' && !block.fullPage && !block.text.trim())
+        ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : undefined });
     const turn = this.pageTurns.get(number);
     if (turn) for (const block of [...analysis.blocks, ...analysis.annotations]) Object.assign(block, { turn, pageRotation: viewport.rotation,
       sourceTransform: pdfSourceTransform(pdfAnalysisViewport(page), viewport) });

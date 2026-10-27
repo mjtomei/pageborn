@@ -153,7 +153,12 @@ export function associatePdfCaptions(pages) {
 
 export function pdfGalleryItems(layout) {
   if (layout?.format !== 'pdf') return [];
-  return layout.blocks.filter(block => block.kind === 'figure' && !block.annotationLabel).map(block => ({
+  const images = layout.blocks.flatMap(block => {
+    if (block.originalPage && block.digitizationCredit) return [{ ...block, ...block.originalPage, x: 0, sourceY: 0,
+      kind: 'figure', fullPage: true, reflow: undefined, lines: [], text: '', figureCaption: undefined }];
+    return block.kind === 'figure' && !block.annotationLabel ? [block] : [];
+  });
+  return images.map(block => ({
     id: block.figureId || pdfFigureId(block.page, block), block, page: block.page,
     title: block.fullPage ? `Page image · page ${block.page}` : block.figureCaption?.reference || (block.figureBounds?.some(b => b.kind === 'table') ? `Table · page ${block.page}` : `Figure · page ${block.page}`),
     caption: block.figureCaption?.text || '',

@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pdfWholePageImage, removePdfScanBorderFragments } from '../src/pdf-page-image.js';
+import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments } from '../src/pdf-page-image.js';
 import { createPdfLayout, PDF_SCREEN, pdfPageTurn } from '../src/pdf-layout.js';
 import { pdfGalleryItems } from '../src/pdf-captions.js';
 import { pdfImageFrame } from '../src/pdf-image-frame.js';
+import { reflowPdfBlock } from '../src/pdf-reflow.js';
 
 const scan = () => {
   const width = 600, height = 900, data = new Uint8ClampedArray(width * height * 4).fill(255);
@@ -71,4 +72,71 @@ test('border cleanup preserves figures, recognized edge text, isolated marks and
     assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [body, block] }), [body, block]);
   }
   assert.deepEqual(removePdfScanBorderFragments({ ...page, blocks: [edge] }), [edge]);
+});
+
+test('blank scan leaves with paper gradients, edge shadows and isolated specks are omitted', () => {
+  const page = scan();
+  for (let y = 0; y < page.height; y++) for (let x = 0; x < page.width; x++) {
+    const p = (y * page.width + x) * 4, value = x < 3 ? 90 : 245 - Math.floor(x / page.width * 13);
+    page.data[p] = page.data[p + 1] = page.data[p + 2] = value;
+  }
+  for (const [x, y] of [[200, 400], [300, 700]]) page.data.fill(100, (y * page.width + x) * 4, (y * page.width + x) * 4 + 3);
+  assert.equal(pdfBlankScan(page), true);
+  assert.deepEqual(pdfWholePageImage({ ...page, blank: pdfBlankScan(page) }).blocks, []);
+  assert.equal(pdfWholePageImage({ ...page, blank: false }).blocks[0].fullPage, true, 'scan-only view can retain the original');
+  page.text = [{ text: 'A faint note', x: 100, y: 100, width: 200, height: 20 }];
+  assert.equal(pdfBlankScan(page), false);
+});
+
+test('unrecognized faint illustrations and dark photographs are not blank scans', () => {
+  const page = scan(); page.data.fill(245);
+  for (let y = 100; y < 300; y++) for (let x = 100; x < 300; x++) {
+    const p = (y * page.width + x) * 4; page.data.fill(226, p, p + 3);
+  }
+  assert.equal(pdfBlankScan(page), false, 'low-contrast interior artwork has coherent edges');
+  page.data.fill(100); assert.equal(pdfBlankScan(page), false);
+});
+
+test('digitization credits reflow while their full original image remains in the gallery', () => {
+  const page = scan(); page.text = ['Digitized by the Example Library', 'in 2020', 'https://example.org/book'].map((text, i) =>
+    ({ text, x: 80, y: 300 + i * 60, width: 440, height: 20, confidence: 95 }));
+  const analysis = pdfWholePageImage({ ...page, reflow: true });
+  const block = analysis.blocks[0]; assert.equal(block.digitizationCredit, true);
+  block.reflow = reflowPdfBlock(block, { measure: text => text.length * 10, pixels: page.data, pageWidth: page.width });
+  assert.ok(block.reflow); assert.match(block.reflow.text, /Digitized by the Example Library/);
+  const layout = createPdfLayout([{ ...analysis, number: 6 }]); const items = pdfGalleryItems(layout);
+  assert.equal(items.length, 1); assert.equal(items[0].block.fullPage, true); assert.equal(items[0].block.sourceY, 0);
+  assert.equal(items[0].block.width, page.width); assert.equal(items[0].block.height, page.height);
+  assert.equal(items[0].block.reflow, undefined);
+  assert.equal(pdfWholePageImage(page).blocks[0].fullPage, true, 'image-only mode retains the page image');
+  page.text.push({ text: 'A book dedication or other content stays in its original page image.', confidence: 95 });
+  assert.equal(pdfWholePageImage({ ...page, reflow: true }).blocks[0].fullPage, true);
+});
+
+test('original paper pixels remove amplified shadows but preserve interior artwork', () => {
+  const page = scan(); page.data.fill(255);
+  const originalData = new Uint8ClampedArray(page.data);
+  const body = { x: 60, y: 100, width: 480, height: 400, kind: 'text', text: 'Readable prose. '.repeat(30), lines: [] };
+  const crop = { x: 0, y: 620, width: 600, height: 280, kind: 'scan', text: '', lines: [] };
+  for (let y = 620; y < 900; y++) for (let x = 0; x < 600; x++) {
+    const p = (y * 600 + x) * 4, paper = 246 - Math.floor(x / 600 * 18);
+    originalData.fill(x > 580 ? 140 : paper, p, p + 3);
+    page.data.fill(x > 500 ? 180 : 250, p, p + 3);
+  }
+  const input = { ...page, originalData, blocks: [body, crop] };
+  assert.deepEqual(removePdfScanBorderFragments(input), [body]);
+  for (let y = 700; y < 760; y++) for (let x = 200; x < 300; x++) originalData.fill(205, (y * 600 + x) * 4, (y * 600 + x) * 4 + 3);
+  assert.deepEqual(removePdfScanBorderFragments(input), [body, crop], 'faint coherent interior drawing remains');
+  const mark = { ...crop, x: 200, y: 700, width: 10, height: 10 };
+  assert.deepEqual(removePdfScanBorderFragments({ ...input, blocks: [body, mark] }), [body, mark]);
+});
+
+test('pale paper stains are omitted from textless crops while continuous faint marks remain', () => {
+  const page = scan(); page.data.fill(255);
+  const bounds = { x: 100, y: 600, width: 400, height: 200 };
+  for (let y = 600; y < 800; y++) for (let x = 100; x < 500; x++) page.data.fill(216, (y * 600 + x) * 4, (y * 600 + x) * 4 + 3);
+  for (let y = 690; y < 700; y++) for (let x = 200; x < 210; x++) page.data.fill(202, (y * 600 + x) * 4, (y * 600 + x) * 4 + 3);
+  assert.equal(pdfBlankScan({ ...page, bounds }), true);
+  for (let x = 300; x < 340; x++) page.data.fill(202, (700 * 600 + x) * 4, (700 * 600 + x) * 4 + 3);
+  assert.equal(pdfBlankScan({ ...page, bounds }), false);
 });

@@ -167,7 +167,7 @@ export function reflowPdfBlock(block, { fontSize = 20, measure, pixels, pageWidt
   const tableRows = Math.max(2, rows.length * .4);
   if (!block.contents && gaps.flat().some(([left, right]) => gaps.filter(row => row.some(([a, b]) =>
     Math.min(right, b) - Math.max(left, a) > height * 1.5)).length >= tableRows)) return null;
-  if (!block.contents && !mostlyTextInk(block, pixels, pageWidth)) return null;
+  if (!block.contents && !block.digitizationCredit && !mostlyTextInk(block, pixels, pageWidth)) return null;
   const paragraphs = []; let paragraph;
   for (const [i, row] of rows.entries()) {
     const last = rows[i - 1];
