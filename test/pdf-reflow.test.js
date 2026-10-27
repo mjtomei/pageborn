@@ -5,6 +5,24 @@ import { createPdfLayout, pdfAnchor, restorePdfAnchor, pdfPageTurn, PDF_SCREEN, 
 
 const line = (text, y, x = 50, width = 490) => ({ text, x, y, width, height: 12 });
 
+test('one uncertain word in reliable scanned prose reflows, while poor or short recognition does not', () => {
+  const lines = Array.from({ length: 8 }, (_, i) => ({ ...line('This reliable printed sentence continues the surrounding paragraph.', 50 + i * 22), confidence: 96 }));
+  lines.push({ ...line('“our”', 230), confidence: 31 });
+  const block = { x: 50, y: 50, width: 490, height: 200, kind: 'text', lines };
+  assert.equal(reflowPdfBlock(block), null);
+  assert.ok(reflowPdfBlock(block, { allowSparseUncertainty: true }).text.includes('“our”'));
+  assert.equal(reflowPdfBlock({ ...block, lines: lines.slice(-1) }, { allowSparseUncertainty: true }), null);
+  assert.equal(reflowPdfBlock({ ...block, lines: lines.map(t => ({ ...t, confidence: 40 })) }, { allowSparseUncertainty: true }), null);
+});
+
+test('paper-edge crops do not split a short continuation from its paragraph', () => {
+  const first = { kind: 'text', x: 50, y: 50, width: 490, height: 60,
+    lines: [line('A long printed sentence continues across a scan segmentation boundary into mani-', 50)] };
+  const tail = { kind: 'text', x: 0, y: 110, width: 540, height: 200, lines: [line('festations.', 112)] };
+  const joined = joinPdfTextTails([first, tail]);
+  assert.equal(joined.length, 1); assert.match(reflowPdfBlock(joined[0]).text, /manifestations\./);
+});
+
 test('a detached descender reconnects to text, but separate strokes and figures remain visible', () => {
   const width = 300; const pixels = new Uint8ClampedArray(width * 200 * 4).fill(255);
   for (let y = 40; y < 56; y++) pixels.fill(0, (y * width + 100) * 4, (y * width + 100) * 4 + 3);

@@ -17,7 +17,7 @@ try {
   const page = await browser.newPage(); page.on('pageerror', error => result.errors.push(error.message));
   await page.route('**/__scans', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Scans</title>' }));
   await page.goto(new URL('/__scans', server.resolvedUrls.local[0]).href);
-  for (const kind of ['blank', 'credit', 'contents']) {
+  for (const kind of ['blank', 'credit', 'contents', 'unresolved']) {
     const pixels = await page.evaluate(kind => {
       const canvas = document.createElement('canvas'); canvas.width = 600; canvas.height = 800;
       const ctx = canvas.getContext('2d'); const paper = ctx.createLinearGradient(0, 0, 600, 0);
@@ -36,6 +36,12 @@ try {
         ctx.fillText('II. TURN THE PAGE . . . . . 7', 55, 280);
         ctx.fillText('III. FIND THE STORY . . . . . 9', 55, 360);
         ctx.font = '20px serif'; ctx.fillText('A guide to reading and exploring a book.', 55, 440);
+      }
+      if (kind === 'unresolved') {
+        ctx.fillStyle = '#222'; ctx.font = '20px serif';
+        for (let i = 0; i < 7; i++) ctx.fillText('A printed paragraph explains the drawing below.', 60, 100 + i * 35);
+        ctx.fillRect(100, 400, 3, 250); ctx.fillRect(100, 647, 380, 3);
+        ctx.beginPath(); ctx.moveTo(105, 620); ctx.lineTo(210, 510); ctx.lineTo(300, 580); ctx.lineTo(470, 410); ctx.stroke();
       }
       const data = ctx.getImageData(0, 0, 600, 800).data, rgb = [];
       for (let i = 0; i < data.length; i += 4) rgb.push(data[i], data[i + 1], data[i + 2]); return rgb;
@@ -61,6 +67,20 @@ try {
           return { kind, omittedFromReflow: true, originalRetained: true };
         }
         const layout = await first.open(content, 'auto');
+        if (kind === 'unresolved') {
+          if (layout.blocks.length !== 1 || !layout.blocks[0].fullPage) throw new Error('Unresolved scanned content was cropped');
+          const items = pdfGalleryItems(layout);
+          if (items.length !== 1 || items[0].block.sourceY !== 0) throw new Error('Extra or cropped gallery fallback');
+          const image = await first.drawFigure(items[0].block, { maxWidth: 1000, maxHeight: 1400 });
+          const reopening = new PdfDocument({ preparationCache });
+          try {
+            const restored = await reopening.open(content, 'auto');
+            if (!reopening.progress.cached || restored.blocks.length !== 1 || !restored.blocks[0].fullPage) throw new Error('Full-page fallback lost after cache reload');
+            const again = await reopening.drawFigure(pdfGalleryItems(restored)[0].block, { maxWidth: 1000, maxHeight: 1400 });
+            if (again.toDataURL() !== image.toDataURL()) throw new Error('Cached fallback image changed');
+          } finally { await reopening.destroy(); }
+          return { kind, wholePage: true, singleGalleryImage: true, cache: true };
+        }
         if (kind === 'contents') {
           const lines = recognized.text.map(line => line.text);
           if (!lines.some(line => /Read the Book/.test(line)) || !lines.some(line => /Turn the Page/.test(line))) throw new Error(`Contents casing: ${lines.join(' | ')}`);

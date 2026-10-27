@@ -158,3 +158,15 @@ test('a few scan letters entering the scored gutter do not send the reader into 
   const flow=page.blocks.map(b=>b.text).join(' ');
   assert.ok(page.columns);assert.ok(flow.indexOf('Left row 31')<flow.indexOf('Right row 0'));
 });
+
+test('hand-drawn frames around printed paragraphs do not become scanned figures', () => {
+  const width = 600, height = 800, data = new Uint8ClampedArray(width * height * 4).fill(255);
+  const rect = (x,y,w,h) => { for(let yy=y;yy<y+h;yy++) for(let xx=x;xx<x+w;xx++) data.fill(0,(yy*width+xx)*4,(yy*width+xx)*4+3); };
+  const text = Array.from({length:8},(_,i)=>({...line('This ordinary printed paragraph remains readable under its hand-drawn lines.',100,150+i*35,400,20),confidence:96}));
+  for(const row of text) { for(let x=100;x<500;x+=20) rect(x,row.y,12,18);rect(100,row.y+23,400,2); }
+  rect(95,145,2,285);
+  assert.deepEqual(scannedPdfFigures({width,height,data,text}),[]);
+  // A connected interior plot is unexplained by those OCR words.
+  rect(200,410,2,150);rect(200,558,280,2);
+  assert.ok(scannedPdfFigures({width,height,data,text}).length>0);
+});

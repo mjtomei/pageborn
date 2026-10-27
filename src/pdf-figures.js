@@ -1,6 +1,6 @@
 // A decorative frame can surround columns; several disconnected panels can
 // form one figure. Use text and pixels to distinguish these two cases.
-import { pdfTextRows } from './pdf-reflow.js';
+import { pdfTextRows, reflowPdfBlock } from './pdf-reflow.js';
 import { pdfCaptionReference } from './pdf-captions.js';
 
 // Scanned axes/grids have no PDF drawing operators. Find connected ink larger
@@ -57,6 +57,15 @@ export function scannedPdfFigures({ width, height, data, text, pageMasks = [] })
     const neighbors=components.filter(b=>b.x >= seed.x-size*3 && b.x+b.width <= seed.x+seed.width+size*3
       && b.y >= top && b.y+b.height <= low);
     return { ...union([seed,...neighbors]), kind:'scan-figure' };
+  }).filter(box => {
+    // Hand-underlines and margin brackets can connect into a frame or mimic
+    // table rules. Reliable prose explaining the actual ink is still text.
+    // Sparse diagram labels, mathematical displays and column gutters fail
+    // the same coverage/table checks used for normal reflow.
+    const lines = text.filter(line => line.x + line.width / 2 >= box.x && line.x + line.width / 2 < box.x + box.width
+      && line.y + line.height / 2 >= box.y && line.y + line.height / 2 < box.y + box.height);
+    if (lines.length < 3 || lines.reduce((sum, line) => sum + line.text.length, 0) < 150) return true;
+    return !reflowPdfBlock({ ...box, kind: 'text', lines }, { pixels: data, pageWidth: width, allowSparseUncertainty: true });
   });
 }
 

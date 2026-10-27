@@ -52,6 +52,30 @@ test('thin pencil strokes and detached glyph strokes stay inside the saved crop'
   assert.ok(crop.y < 150 && crop.y + crop.height > 174);
   assert.ok(crop.x < 520 && crop.x + crop.width > 562);
 });
+test('attached phantom letters and tiny pen marks do not turn underlined prose into images', () => {
+  const p = fixture();
+  p.rect(100, 123, 65, 2);
+  p.text.push({ x: 100, y: 122, width: 65, height: 14, text: 'N——', confidence: 0 });
+  p.rect(180, 163, 30, 2);
+  p.text.push({ x: 180, y: 162, width: 30, height: 7, text: 'S—', confidence: 43 });
+  p.text.push({ x: 200, y: 202, width: 6, height: 8, text: 'M', confidence: 46 });
+  const short = { x: 100, y: 580, width: 100, height: 20, text: 'medium,', confidence: 69 };
+  p.text.push(short, { x: 100, y: 605, width: 65, height: 14, text: 'p——', confidence: 0 }); p.rect(100, 606, 65, 2);
+  const result = pdfScanMarks(p);
+  assert.equal(result.text.length, 13); assert.ok(result.text.includes(short));
+  assert.ok(!result.text.some(line => /[—]/.test(line.text) || line.text === 'M'));
+  const actual = { x: 100, y: 122, width: 65, height: 20, text: 'John—', confidence: 30 };
+  p.text.push(actual); assert.ok(pdfScanMarks(p).text.includes(actual), 'an underlined name is still a word');
+});
+test('a spurious tiny word can be removed from a printed line without deleting the line', () => {
+  const p = fixture();
+  const word = { x: 100, y: 540, width: 140, height: 20, text: 'democracy.', confidence: 96 };
+  // The artifact lies under an existing printed baseline and has almost no height.
+  const pen = { x: 260, y: 562, width: 18, height: 2, text: 'BN', confidence: 0 };
+  p.text.push({ ...word, width: 178, height: 24, text: 'democracy. BN', confidence: 40, words: [word, pen] });
+  const clean = pdfScanMarks(p).text.at(-1);
+  assert.equal(clean.text, 'democracy.'); assert.equal(clean.confidence, 96); assert.deepEqual(clean.words, [word]);
+});
 test('annotation gallery is separate from reading/figures and survives preparation cache reload', () => {
   const note = { x: 520, y: 150, width: 60, height: 80, kind: 'figure', text: '', lines: [], annotation: { kind: 'handwriting' } };
   const body = { x: 80, y: 100, width: 400, height: 500, kind: 'text', text: 'Printed words', lines: [] };

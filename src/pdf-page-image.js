@@ -96,3 +96,16 @@ export function removePdfScanBorderFragments({ blocks, width, height, data, orig
     return false;
   });
 }
+
+// Unresolved scanned content stays in its full source page. Mixing readable
+// paragraphs with cropped OCR failures makes an underline look like artwork
+// and loses the context needed to inspect a genuinely illegible passage.
+// Native PDF figures are unaffected; separate handwriting annotations stay.
+export function pdfScanPageFallback(analysis, { width, height, images }) {
+  if (!images.some(image => image.kind !== 'drawing' && image.width * image.height >= width * height * .85)
+    || analysis.blocks.some(block => block.fullPage)
+    || !analysis.blocks.some(block => !block.reflow)) return analysis;
+  const bounds = { x: 0, y: 0, width, height };
+  return { ...analysis, bounds, columns: false, marginMasks: [],
+    blocks: [{ ...bounds, kind: 'figure', fullPage: true, lines: [], text: '' }] };
+}

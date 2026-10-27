@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { PdfWork } from './pdf-work.js';
 import { reconcilePdfOcr } from './pdf-ocr-consensus.js';
 import { pdfScanMarks, pdfUnderlineBlock } from './pdf-scan-marks.js';
-import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments } from './pdf-page-image.js';
+import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments, pdfScanPageFallback } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
 import { paintedPdfPaths, ruledPdfTables } from './pdf-drawings.js';
@@ -377,7 +377,6 @@ export class PdfDocument {
     analysis.blocks = reunitePdfFigureFragments(analysis.blocks);
     if (reflow) analysis.blocks = analysis.blocks.filter(block => !pdfUnderlineBlock(block, text));
     analysis.annotations = marks.annotations;
-    this.marginMasks.set(number, analysis.marginMasks);
     if (reflow && !analysis.blocks.some(block => block.fullPage)) {
       analysis.blocks = joinPdfTextTails(joinPdfTextFragments(analysis.blocks, pixels.data, canvas.width));
       if (needsOcr && !this.ocrFailed && !this.headingOcrFailed) {
@@ -411,6 +410,18 @@ export class PdfDocument {
       width: canvas.width, height: canvas.height, data: pixels.data,
       originalData: analysis.blocks.some(block => block.kind === 'scan' && !block.fullPage && !block.text.trim())
         ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : undefined });
+    this.checkpoint('reflowing-text');
+    await this.yieldPreparation();
+    if (reflow) for (const block of analysis.blocks) {
+      block.reflow = reflowPdfBlock(block, {
+        // The preview and native glasses share row/source coordinates. Wrap
+        // to fit both fonts; leave the same firmware allowance as Markdown.
+        fontSize: textSize, measure, pixels: pixels.data, pageWidth: canvas.width, allowSparseUncertainty: needsOcr,
+      });
+      if (block.reflow) block.reflow.nativeWrap = 1;
+    }
+    if (reflow && needsOcr) analysis = pdfScanPageFallback(analysis, { width: canvas.width, height: canvas.height, images });
+    this.marginMasks.set(number, analysis.marginMasks);
     const turn = this.pageTurns.get(number);
     if (turn) for (const block of [...analysis.blocks, ...analysis.annotations]) Object.assign(block, { turn, pageRotation: viewport.rotation,
       sourceTransform: pdfSourceTransform(pdfAnalysisViewport(page), viewport) });
@@ -421,16 +432,6 @@ export class PdfDocument {
     if (normalizeColors) for (const block of [...analysis.blocks, ...analysis.annotations]) {
       block.colorProfile = pdfColorProfile(ctx.getImageData(Math.floor(block.x), Math.floor(block.y),
         Math.ceil(block.width), Math.ceil(block.height)).data);
-    }
-    this.checkpoint('reflowing-text');
-    await this.yieldPreparation();
-    if (reflow) for (const block of analysis.blocks) {
-      block.reflow = reflowPdfBlock(block, {
-        // The preview and native glasses share row/source coordinates. Wrap
-        // to fit both fonts; leave the same firmware allowance as Markdown.
-        fontSize: textSize, measure, pixels: pixels.data, pageWidth: canvas.width,
-      });
-      if (block.reflow) block.reflow.nativeWrap = 1;
     }
     return { page: { number, width: canvas.width, height: canvas.height, ...analysis }, endMatter };
   }

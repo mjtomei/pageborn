@@ -5,6 +5,18 @@ import { insidePdfMargin } from '../src/pdf-margins.js';
 import { analyzePdfPage } from '../src/pdf-layout.js';
 
 const line = (text, y, x = 60, width = 470, height = 12) => ({ text, x, y, width, height });
+
+test('a repeated compact running head survives a damaged OCR folio without retaining its garbage', () => {
+  const body = [180, 210, 240, 270].map(y => line('Alphabetical index entry, 25', y, 60, 180, 14));
+  const a = { width: 600, height: 800, text: [line('222', 44, 60, 30, 14), line('INDEX', 44, 260, 70, 14), ...body] };
+  const b = { ...a, text: [line('INDEX', 44, 230, 70, 14), line('2', 44, 500, 10, 14),
+    { ...line('[§v]', 46, 512, 10, 12), confidence: 0 }, { ...line('°S)', 46, 524, 10, 12), confidence: 0 }, ...body] };
+  const masks = repeatedPdfTextMasks([a, b]);
+  assert.ok(masks.every(page => page.length === 1));
+  assert.ok(b.text.slice(0, 4).every(box => insidePdfMargin(box, masks[1])));
+  assert.ok(body.every(box => !insidePdfMargin(box, masks[1])));
+  assert.deepEqual(repeatedPdfTextMasks([b]), [[]], 'one suspicious edge row is insufficient');
+});
 const pages = () => Array.from({ length: 8 }, (_, i) => ({ width: 600, height: 800, text: [
   line(i % 2 ? `Journal Review ${100 + i}` : `${100 + i} Running Title`, 42),
   line('A repeated phrase in the body is still content.', 200),

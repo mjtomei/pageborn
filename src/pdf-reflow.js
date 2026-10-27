@@ -78,8 +78,10 @@ export function joinPdfTextTails(blocks) {
       && rows[0].text.length <= 160 && (previousText.length > 60
         || previousText.length > 20 && /[-\u2010\u00ad]\s*$/.test(previousText) && previousText === previousText.toUpperCase())
       && (/^\p{Ll}/u.test(rows[0].text.trim()) || /\p{L}[-\u2010\u00ad]\s*$/u.test(previousText))
-      && gap >= -1 && gap <= height * 1.5 && Math.abs(block.x - previous.x) <= height * .75
-      && height / previousHeight > (titleContinuation ? .75 : .8) && height / previousHeight < 1.25) {
+      && gap >= -1 && gap <= height * 1.5
+      && Math.abs(Math.max(block.x, Math.min(...block.lines.map(line => line.x)))
+        - Math.max(previous.x, Math.min(...previous.lines.map(line => line.x)))) <= height * .75
+      && height / previousHeight > .75 && height / previousHeight < 1.25) {
       const right = Math.max(previous.x + previous.width, block.x + block.width);
       previous.x = Math.min(previous.x, block.x); previous.width = right - previous.x;
       previous.height = Math.max(previous.y + previous.height, block.y + block.height) - previous.y;
@@ -142,7 +144,7 @@ function mostlyTextInk(block, pixels, pageWidth) {
   return !ink || explained / ink >= .85;
 }
 
-export function reflowPdfBlock(block, { fontSize = 20, measure, pixels, pageWidth } = {}) {
+export function reflowPdfBlock(block, { fontSize = 20, measure, pixels, pageWidth, allowSparseUncertainty = false } = {}) {
   if (block.kind === 'figure' || !block.lines?.length) return null;
   const rows = pdfTextRows(block.lines); const height = median(block.lines.map(t => t.height));
   if (block.contents) for (const row of rows) {
@@ -157,7 +159,16 @@ export function reflowPdfBlock(block, { fontSize = 20, measure, pixels, pageWidt
     || t.noteMarker && block.annotation?.kind === 'footnote' && t.confidence >= 65)
     && (letters > 0 || /\d/.test(text) || /^[\s*⁂❦]+$/.test(text)) && math === 0;
   if ((!shortText && (letters < 12 || words.length < 4)) || math > Math.max(2, words.length / 12)) return null;
-  if (block.lines.some(t => t.confidence != null && t.confidence < 55)) return null;
+  if (block.lines.some(t => t.confidence != null && t.confidence < 55)) {
+    // A single italic/quoted word must not turn an otherwise reliable scan
+    // into an image. Bound uncertainty by characters, not by the OCR row count.
+    // Short unreadable fragments and consistently poor recognition still fail.
+    const tokens = block.lines.flatMap(line => line.words?.length ? line.words : [line]);
+    const count = tokens.reduce((sum, token) => sum + token.text.length, 0);
+    const weak = tokens.reduce((sum, token) => sum + ((token.confidence ?? 100) < 55 ? token.text.length : 0), 0);
+    const confidence = tokens.reduce((sum, token) => sum + (token.confidence ?? 100) * token.text.length, 0) / count;
+    if (!allowSparseUncertainty || count < 150 || weak / count > .03 || confidence < 85) return null;
+  }
   // A table has a repeated vertical gutter. Justified scans can have wide
   // spaces on many lines without sharing a column boundary.
   const gaps = rows.map(row => row.items.slice(1).flatMap((item, i) => {

@@ -36,19 +36,28 @@ function rowMask(page, row) {
 
 function numberedHead(row, page) {
   const words = row.parts.flatMap(part => part.words?.length ? part.words : [part]).sort((a, b) => a.x - b.x);
-  const first = words[0], last = words.at(-1);
-  const leading = /^\d{1,5}$/.test(first?.text.trim()), trailing = /^\d{1,5}$/.test(last?.text.trim());
-  if (words.length < 2 || leading === trailing) return null;
-  const folio = leading ? first : last, title = leading ? words.slice(1) : words.slice(0, -1);
-  const gap = leading ? title[0].x - folio.x - folio.width : folio.x - lastRight(title);
+  const split = words.findIndex((word, i) => i > 0 && word.x - lastRight(words.slice(0, i)) >= Math.max(row.height * 3, page.width * .04));
+  if (split < 1) return null;
+  const left = words.slice(0, split), right = words.slice(split);
+  // A damaged folio can be several OCR fragments (e.g. one digit followed by
+  // two low-confidence shapes). Require a real digit, a compact outer cluster
+  // and an independently repeated title; never guess the missing page number.
+  const isFolio = parts => parts.some(word => /^\d{1,5}$/.test(word.text.trim()))
+    && parts.every(word => /^\d{1,5}$/.test(word.text.trim()) || word.confidence < 55 && word.text.length <= 4)
+    && parts.map(word => word.text).join('').length <= 10 && lastRight(parts) - parts[0].x <= page.width * .12;
+  const leading = isFolio(left), trailing = isFolio(right);
+  if (leading === trailing) return null;
+  const title = leading ? right : left;
   const label = title.map(word => word.text).join(' ').trim();
+  const compactTitle = /^[A-Z]{4,}$/.test(label);
   // A detached folio at the page edge is stronger evidence than a heading
   // like “4. Results”. Never classify a numbered section by its string alone.
-  if (gap < Math.max(row.height * 3, page.width * .04) || folio.width > page.width * .12
-    || !/^[\p{L}\s,'’:&–—-]+$/u.test(label) || (label.match(/\p{L}+/gu) || []).length < 2
-    || label.length < 8 || label.length > 100) return null;
+  if (!/^[\p{L}\s,'’:&–—-]+$/u.test(label)
+    || !((label.match(/\p{L}+/gu) || []).length >= 2 && label.length >= 8 || compactTitle)
+    || label.length > 100) return null;
   const body = page.text.filter(box => box.y > page.height * .12 && bottom(box) < page.height * .88
-    && box.text.length > 35 && box.width > page.width * .35 && box.height > 0 && box.height < page.height * .04);
+    && box.text.length > (compactTitle ? 20 : 35) && box.width > page.width * (compactTitle ? .25 : .35)
+    && box.height > 0 && box.height < page.height * .04);
   const sizes = body.map(box => box.height).sort((a, b) => a - b);
   if (body.length < 3 || row.height > sizes[Math.floor(sizes.length / 2)] * 1.25) return null;
   return signature(label);

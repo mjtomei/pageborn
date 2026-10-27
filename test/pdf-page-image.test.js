@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments } from '../src/pdf-page-image.js';
+import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments, pdfScanPageFallback } from '../src/pdf-page-image.js';
 import { createPdfLayout, PDF_SCREEN, pdfPageTurn } from '../src/pdf-layout.js';
 import { pdfGalleryItems } from '../src/pdf-captions.js';
 import { pdfImageFrame } from '../src/pdf-image-frame.js';
@@ -12,6 +12,24 @@ const scan = () => {
   for (let i = 20003; i < 20400; i += 4) data[i] = 255;
   return { width, height, data, images: [{ x: 0, y: 0, width, height }], text: [] };
 };
+
+test('unresolved scan content becomes one full page without adding crop copies to the gallery', () => {
+  const page = scan();
+  const annotations = [{ x: 5, y: 100, width: 30, height: 50, kind: 'figure', lines: [], text: '', annotation: { kind: 'handwriting' } }];
+  const text = { x: 60, y: 100, width: 480, height: 200, kind: 'text', lines: [], text: 'Readable words', reflow: { text: 'Readable words' } };
+  const crop = { x: 80, y: 350, width: 300, height: 80, kind: 'text', lines: [], text: 'Unreadable crop' };
+  const input = { blocks: [text, crop], annotations, marginMasks: [{ x: 0, y: 0, width: 600, height: 20 }] };
+  const result = pdfScanPageFallback(input, page);
+  assert.equal(result.blocks.length, 1); assert.equal(result.blocks[0].fullPage, true);
+  assert.deepEqual(result.marginMasks, []); assert.equal(result.annotations, annotations);
+  const layout = createPdfLayout([{ ...result, number: 1, width: page.width, height: page.height }]);
+  assert.equal(pdfGalleryItems(layout).length, 1);
+  assert.equal(pdfGalleryItems(layout)[0].block.width, 600); assert.equal(pdfGalleryItems(layout)[0].block.height, 900);
+  assert.equal(pdfScanPageFallback(input, { ...page, images: [] }), input, 'native figures keep their normal layout');
+  const complete = { ...input, blocks: [text] };
+  assert.equal(pdfScanPageFallback(complete, page), complete);
+  const blank = { ...input, blocks: [] }; assert.equal(pdfScanPageFallback(blank, page), blank);
+});
 
 test('covers and sparse title pages stay whole, fit one glasses pane and appear in the phone gallery', () => {
   const page = scan(); page.text = [{ x: 100, y: 100, width: 400, height: 30, text: 'THE PUBLIC AND ITS PROBLEMS' }];

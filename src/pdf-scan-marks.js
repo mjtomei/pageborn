@@ -69,20 +69,32 @@ export function pdfScanMarks({ width, height, data, text }) {
   const inside = (box, region) => box.x + box.width / 2 >= region.x && box.x + box.width / 2 < right(region)
     && box.y + box.height / 2 >= region.y && box.y + box.height / 2 < bottom(region);
   const clean = [];
+  const printed = text.flatMap(line => line.words?.length ? line.words : [line])
+    .filter(word => word.confidence >= 70 && /\p{L}{3}/u.test(word.text) && word.height >= size * .6);
   for (const line of text) {
-    const words = line.words?.filter(word => !annotations.some(region => inside(word, region)));
+    // A detached speck or horizontal pen stroke sometimes becomes a tiny
+    // alphabetic word. Printed superscripts and note markers are protected;
+    // only marks below a neighboring baseline can qualify.
+    const tinyMark = word => word.confidence < 55 && /^[A-HJ-UW-Za-z]{1,2}$/.test(word.text)
+      && !line.noteMarker && !word.references?.length && word.height < size * .45 && word.width < size
+      && printed.some(row => word.y >= bottom(row) && word.y - bottom(row) < size * .65
+        && word.x >= row.x && right(word) <= right(row) + size * 2);
+    const words = line.words?.filter(word => !annotations.some(region => inside(word, region)) && !tinyMark(word));
     if (words && !words.length || !words && annotations.some(region => inside(line, region))) continue;
+    if (!words && tinyMark(line)) continue;
     const current = words && words.length !== line.words.length ? { ...line, ...union(words), words, text: words.map(word => word.text).join(' '),
       confidence: words.reduce((sum, word) => sum + (word.confidence ?? 100), 0) / words.length } : line;
     // Underlines can be hallucinated as a low-confidence row such as “— eer 5
     // =”. Require a long thin stroke and a neighboring printed line before
     // removing that row; short real words and note references are preserved.
     const letters = (current.text.match(/\p{L}/gu) || []).length;
-    const nearProse = prose.some(row => Math.abs(bottom(row) - current.y) < size * .7
+    const nearProse = rows.some(row => row !== current && row.confidence >= 65 && row.height >= size * .6
+      && (row.text.match(/\p{L}/gu) || []).length >= 4 && Math.abs(bottom(row) - current.y) < size * 1.2
       && Math.min(right(row), right(current)) - Math.max(row.x, current.x) > current.width * .7);
-    const stroke = current.confidence < 55 && letters <= 4 && /(?:^|\s)[—–_=\-]+(?:\s|$)/u.test(current.text)
+    const stroke = current.confidence < 55 && letters <= 4
+      && (/(?:^|\s)[—–_=\-]+(?:\s|$)/u.test(current.text) || letters <= 1 && /[—–_=\-]+/u.test(current.text))
       && !current.noteMarker && !current.words?.some(word => word.references?.length) && nearProse
-      && components(data, width, height, current).some(box => box.width >= Math.max(size * 4, current.width * .7)
+      && components(data, width, height, current).some(box => box.width >= Math.max(20, size * .8, current.width * .7)
         // A wavy underline may touch a page number or descend several pixels;
         // its average ink thickness still distinguishes it from printed text.
         && box.height <= size && box.count / box.width <= size * .25);
