@@ -11,8 +11,8 @@ export function pdfBlankScan({ width, height, data, text, bounds }) {
   const top = Math.max(edge, bounds ? Math.ceil(bounds.y) + 8 : 0);
   const right = Math.min(width - edge, bounds ? Math.floor(bounds.x + bounds.width) - 8 : width);
   const bottom = Math.min(height - edge, bounds ? Math.floor(bounds.y + bounds.height) - 8 : height);
-  if (bounds && (right <= left || bottom <= top)) return bounds.x + bounds.width <= edge
-    || bounds.y + bounds.height <= edge || bounds.x >= width - edge || bounds.y >= height - edge;
+  if (bounds && (right <= left || bottom <= top)) return bounds.x + bounds.width <= edge + 8
+    || bounds.y + bounds.height <= edge + 8 || bounds.x >= width - edge - 8 || bounds.y >= height - edge - 8;
   const area = Math.max(1, (right - left) * (bottom - top)), scale = area / (860 * 1310);
   const gray = p => data[p] * .2126 + data[p + 1] * .7152 + data[p + 2] * .0722;
   const details = bounds ? new Set() : null;

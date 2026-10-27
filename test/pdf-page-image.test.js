@@ -125,6 +125,8 @@ test('original paper pixels remove amplified shadows but preserve interior artwo
   }
   const input = { ...page, originalData, blocks: [body, crop] };
   assert.deepEqual(removePdfScanBorderFragments(input), [body]);
+  const narrow = { ...crop, x: 575, width: 25 };
+  assert.deepEqual(removePdfScanBorderFragments({ ...input, blocks: [body, narrow] }), [body], 'a crop just outside the edge inset is still paper');
   for (let y = 700; y < 760; y++) for (let x = 200; x < 300; x++) originalData.fill(205, (y * 600 + x) * 4, (y * 600 + x) * 4 + 3);
   assert.deepEqual(removePdfScanBorderFragments(input), [body, crop], 'faint coherent interior drawing remains');
   const mark = { ...crop, x: 200, y: 700, width: 10, height: 10 };
