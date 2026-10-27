@@ -200,8 +200,8 @@ input[type=checkbox][role=switch]:disabled{opacity:.42}
 #passage .table-row-start[aria-current=true],#passage .table-field[aria-current=true],#passage .table-value[aria-current=true]{background:var(--accent-dim);border-left-color:var(--accent)}
 @media(hover:hover){#passage button:hover{background:var(--surface-2)}}
 #pdf-passage{background:#fff}
-#pdf-gallery{margin:16px 8px 0;min-width:0}
-#pdf-gallery .eyebrow{margin:0 0 8px}
+#pdf-gallery,#pdf-annotations{margin:16px 8px 0;min-width:0}
+:is(#pdf-gallery,#pdf-annotations) .eyebrow{margin:0 0 8px}
 .figure-strip{display:flex;gap:10px;overflow-x:auto;overscroll-behavior-x:contain;padding:2px 2px 10px}
 .figure-thumbnail{flex:0 0 164px;min-width:0;display:flex;flex-direction:column;gap:6px;text-align:left;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);font:inherit}
 .figure-thumb-image{display:flex;align-items:center;justify-content:center;width:100%;height:96px;background:#fff;color:#555;border-radius:5px;overflow:hidden}
@@ -209,9 +209,9 @@ input[type=checkbox][role=switch]:disabled{opacity:.42}
 .figure-thumb-image canvas,.figure-image canvas{aspect-ratio:auto;filter:none;border-radius:0;background:#fff}
 .figure-thumb-title{font-weight:600;font-size:.85rem}
 .figure-thumb-caption{font-size:.8rem;line-height:1.3;color:var(--muted);height:2.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-#figure-dialog{box-sizing:border-box;width:100%;max-width:none;height:100dvh;max-height:none;margin:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));border:0;background:var(--surface);color:var(--text);overflow:hidden}
-#figure-dialog[open]{display:flex;flex-direction:column;gap:12px}
-#figure-dialog::backdrop{background:var(--scrim)}
+:is(#figure-dialog,#annotation-dialog){box-sizing:border-box;width:100%;max-width:none;height:100dvh;max-height:none;margin:0;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));border:0;background:var(--surface);color:var(--text);overflow:hidden}
+:is(#figure-dialog,#annotation-dialog)[open]{display:flex;flex-direction:column;gap:12px}
+:is(#figure-dialog,#annotation-dialog)::backdrop{background:var(--scrim)}
 .figure-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0}
 .figure-title{font:inherit;font-weight:600;margin:0;min-width:0}
 .figure-close{flex-shrink:0;min-height:44px}
@@ -422,13 +422,14 @@ input[type=checkbox][role=switch]:disabled{opacity:.42}
   .passage-heading{grid-column:2;grid-row:2;margin-top:0}
   #passage,#pdf-passage{grid-column:2;grid-row:3/9}
   #pdf-gallery{grid-column:2;grid-row:9}
+  #pdf-annotations{grid-column:2;grid-row:10}
   .dock{grid-template-columns:minmax(0,1fr) minmax(300px,.8fr);align-items:center;gap:8px 20px}
   .dock-options{grid-column:1/-1;padding-bottom:8px}
   .dock .mode-row{flex-wrap:wrap;gap:8px 16px}
   .dock .mode-row .segmented{width:auto}
   .dock .mode-row .speed-control{flex:1 1 240px;justify-content:flex-end}
   .dock .mode-row .speed-control input{max-width:220px}
-  .settings{grid-column:1/-1;grid-row:10}
+  .settings{grid-column:1/-1;grid-row:11}
   .navigation-content{max-height:min(38vh,420px)}
 }
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
@@ -586,7 +587,7 @@ input[type=checkbox][role=switch]:disabled{opacity:.42}
   .dock[data-mode=page] .mode-menu,.dock[data-mode=page] .dock-options{grid-row:1}
   .dock[data-transport=away] .position-row{grid-column:1/-1}
   /* Ask uses the wide right-hand pane; the reading preview returns with reading. */
-  .reading-panel[data-ask=open] .passage-heading,.reading-panel[data-ask=open] #passage,.reading-panel[data-ask=open] #pdf-passage,.reading-panel[data-ask=open] #pdf-gallery{display:none}
+  .reading-panel[data-ask=open] .passage-heading,.reading-panel[data-ask=open] #passage,.reading-panel[data-ask=open] #pdf-passage,.reading-panel[data-ask=open] #pdf-gallery,.reading-panel[data-ask=open] #pdf-annotations{display:none}
   .reading-panel[data-ask=open] #ask-panel{grid-column:2;grid-row:3/10;height:clamp(420px,calc(100vh - 330px),900px)}
 }
 

@@ -3,6 +3,8 @@ import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?worker&inline';
 import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
 import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { PdfWork } from './pdf-work.js';
+import { reconcilePdfOcr } from './pdf-ocr-consensus.js';
+import { pdfScanMarks, pdfUnderlineBlock } from './pdf-scan-marks.js';
 import { pdfWholePageImage } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
@@ -248,7 +250,7 @@ export class PdfDocument {
             const result = await this.ocr.recognize(page, viewport, `${this.pdf.fingerprints[0]}:${number}`, percent => {
               if (!this.destroyed) onProgress(`Reading scanned page ${number} of ${this.pdf.numPages}${percent == null ? '…' : ` · ${percent}%`}`);
             });
-            turn = result.turn; text = turn ? result.text : restorePdfOcrMarkers(result.text, embedded);
+            turn = result.turn; text = turn ? result.text : reconcilePdfOcr(restorePdfOcrMarkers(result.text, embedded), embedded);
             if (turn) {
               this.pageTurns.set(number, turn);
               const corrected = pdfAnalysisViewport(page, turn);
@@ -343,12 +345,15 @@ export class PdfDocument {
     if (!keepRepeatedText) repeatedMasks[number-1].push(...pdfGraphicFurnitureMasks({ width: canvas.width, height: canvas.height,
       text, images, masks: repeatedMasks[number-1] }));
     const needsOcr = textPages[number - 1].needsOcr;
+    const marks = needsOcr && reflow ? pdfScanMarks({ width: canvas.width, height: canvas.height, data: pixels.data, text })
+      : { text, annotations: [], masks: [] };
+    text = marks.text;
     this.checkpoint('analyzing-layout');
     images.push(...ruledPdfTables(paths, text, canvas.width, canvas.height));
     const contents = reflow ? pdfContentsEntries(text, canvas.width) : [];
     const input = { width: canvas.width, height: canvas.height,
-      data: pixels.data, text: textPages[number - 1].layoutText,
-      figureText: text, images, mode: contents.length ? 'single' : mode, keepMarginNotes, pageMasks: repeatedMasks[number - 1] };
+      data: pixels.data, text: textPages[number - 1].layoutFromOcr ? text : textPages[number - 1].layoutText,
+      figureText: text, images, mode: contents.length ? 'single' : mode, keepMarginNotes, pageMasks: [...repeatedMasks[number - 1], ...marks.masks] };
     let analysis = pdfWholePageImage({ ...input, text: textPages[number - 1].text }) || analyzePdfPage(input);
     await this.yieldPreparation();
     if (needsOcr && reflow && analysis.columns && Number.isFinite(analysis.split)) {
@@ -368,6 +373,8 @@ export class PdfDocument {
       if (block.lines.length && block.kind === 'scan') block.kind = 'text';
     }
     analysis.blocks = reunitePdfFigureFragments(analysis.blocks);
+    if (reflow) analysis.blocks = analysis.blocks.filter(block => !pdfUnderlineBlock(block, text));
+    analysis.annotations = marks.annotations;
     this.marginMasks.set(number, analysis.marginMasks);
     if (reflow && !analysis.blocks.some(block => block.fullPage)) {
       analysis.blocks = joinPdfTextTails(joinPdfTextFragments(analysis.blocks, pixels.data, canvas.width));
@@ -399,13 +406,13 @@ export class PdfDocument {
       endMatter ||= Number.isFinite(pdfEndMatterStart(analysis));
     }
     const turn = this.pageTurns.get(number);
-    if (turn) for (const block of analysis.blocks) Object.assign(block, { turn, pageRotation: viewport.rotation,
+    if (turn) for (const block of [...analysis.blocks, ...analysis.annotations]) Object.assign(block, { turn, pageRotation: viewport.rotation,
       sourceTransform: pdfSourceTransform(pdfAnalysisViewport(page), viewport) });
     // Retain original pixels. A dark callout on a light page can have a
     // different paper color; deriving its profile from an already grayscale
     // page would lose equal-luminance color differences inside it.
     this.checkpoint('normalizing-blocks', { blocks: analysis.blocks.length });
-    if (normalizeColors) for (const block of analysis.blocks) {
+    if (normalizeColors) for (const block of [...analysis.blocks, ...analysis.annotations]) {
       block.colorProfile = pdfColorProfile(ctx.getImageData(Math.floor(block.x), Math.floor(block.y),
         Math.ceil(block.width), Math.ceil(block.height)).data);
     }
@@ -471,7 +478,7 @@ export class PdfDocument {
         ctx.drawImage(tile, 0, index * PDF_RASTER_TILE);
       }
       ctx.fillStyle = '#fff';
-      for (const mask of this.marginMasks.get(block.page) || []) ctx.fillRect((mask.x - block.x) * scale,
+      for (const mask of block.annotation?.kind === 'handwriting' ? [] : this.marginMasks.get(block.page) || []) ctx.fillRect((mask.x - block.x) * scale,
         (mask.y - block.sourceY) * scale, mask.width * scale, mask.height * scale);
       return canvas;
     } catch (error) { canvas.width = canvas.height = 1; throw error; }

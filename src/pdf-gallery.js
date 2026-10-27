@@ -7,8 +7,9 @@ const release = element => {
 };
 
 export class PdfGallery {
-  constructor(element, dialog) {
+  constructor(element, dialog, items = pdfGalleryItems) {
     this.element = element; this.dialog = dialog;
+    this.galleryItems = items;
     this.strip = element.querySelector('.figure-strip');
     this.stage = dialog.querySelector('.figure-stage');
     this.image = dialog.querySelector('.figure-image');
@@ -46,7 +47,7 @@ export class PdfGallery {
       release(this.strip); this.items.clear(); this.strip.scrollLeft = 0;
     }
     this.layout = layout;
-    const figures = pdfGalleryItems(layout); const ids = new Set(figures.map(figure => figure.id));
+    const figures = this.galleryItems(layout); const ids = new Set(figures.map(figure => figure.id));
     for (const [id, item] of this.items) if (!ids.has(id)) {
       item.abort?.abort(); this.observer.unobserve(item.button); release(item.thumb); item.button.remove(); this.items.delete(id);
     }
@@ -113,7 +114,7 @@ export class PdfGallery {
     const item = this.items.get(id); if (!item) return;
     this.modalAbort?.abort(); const abort = new AbortController(); this.modalAbort = abort;
     this.openId = id; this.describe(item); this.caption.scrollTop = 0; release(this.image);
-    const status = this.dialog.querySelector('.figure-loading'); status.textContent = 'Loading figure…';
+    const status = this.dialog.querySelector('.figure-loading'); status.textContent = 'Loading image…';
     if (!this.dialog.open) this.dialog.showModal();
     this.stage.setAttribute('aria-busy', 'true');
     try {
@@ -124,7 +125,7 @@ export class PdfGallery {
       canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', item.caption || item.title);
       this.image.append(canvas); status.textContent = ''; this.fit();
     } catch {
-      if (!abort.signal.aborted) status.textContent = 'Could not load this figure. Close and tap it to retry.';
+      if (!abort.signal.aborted) status.textContent = 'Could not load this image. Close and tap it to retry.';
     } finally { if (!abort.signal.aborted) this.stage.setAttribute('aria-busy', 'false'); }
   }
   fit() {
@@ -135,7 +136,7 @@ export class PdfGallery {
       return this.measure.getBoundingClientRect().height;
     };
     const fit = fitPdfGallery(item.block.width, item.block.height, this.stage.clientWidth, this.stage.clientHeight, measureCaption,
-      { minCaptionWidth: parseFloat(getComputedStyle(this.caption).fontSize) * 9 });
+      { minCaptionWidth: parseFloat(getComputedStyle(this.caption).fontSize) * 9, allowRotation: item.block.annotation?.kind !== 'handwriting' });
     for (const [element, box] of [[this.image, fit.image], [this.caption, fit.caption]]) {
       element.style.width = `${box.width}px`; element.style.height = `${box.height}px`;
       element.style.left = `${box.x}px`; element.style.top = `${box.y}px`;

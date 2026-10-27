@@ -5,7 +5,7 @@ import { MAX_PDF_PAGES } from './pdf-limits.js';
 
 // Increment only when preparation geometry/recognition changes, not on every
 // app release. The full source hash and every PDF formatting option also match.
-export const PDF_PREPARATION_VERSION = 11;
+export const PDF_PREPARATION_VERSION = 12;
 export async function pdfPreparationKey(bytes, options, pdfjsVersion) {
   const hash = await crypto.subtle.digest('SHA-256', bytes);
   return JSON.stringify([PDF_PREPARATION_VERSION, pdfjsVersion,
@@ -14,15 +14,18 @@ export async function pdfPreparationKey(bytes, options, pdfjsVersion) {
 
 export function packPdfPreparation(layout, marginMasks, pageScales) {
   if (layout.preparation?.complete === false) throw new Error('PDF preparation is still incomplete.');
-  const { blocks, headings, blockY, lineStarts, height, maxY, pages, size } = layout;
+  const { blocks, headings, blockY, lineStarts, height, maxY, pages, size, annotations = [] } = layout;
   return { version: PDF_PREPARATION_VERSION, marginMasks: [...marginMasks], pageScales: [...pageScales],
     layout: { blocks: blocks.map(block => ({ ...block, ...(block.reflow ? { reflow: { ...block.reflow,
-      rows: block.reflow.rows.map(({ items, ...row }) => row) } } : {}) })), headings, blockY, lineStarts, height, maxY, pages, size } };
+      rows: block.reflow.rows.map(({ items, ...row }) => row) } } : {}) })), headings, blockY, lineStarts, height, maxY, pages, size, annotations } };
 }
 export function unpackPdfPreparation(saved) {
   const layout = saved?.layout;
   const positive = n => Number.isFinite(n) && n > 0;
   const positions = xs => Array.isArray(xs) && xs.every((n, i) => Number.isFinite(n) && n >= 0 && (!i || n >= xs[i - 1]));
+  const validTurn = block => !block.turn || ([90,270].includes(block.turn) && [0,90,180,270].includes(block.pageRotation)
+    && Array.isArray(block.sourceTransform) && block.sourceTransform.length === 6 && block.sourceTransform.every(Number.isFinite)
+    && Math.abs(block.sourceTransform[0]*block.sourceTransform[3]-block.sourceTransform[1]*block.sourceTransform[2]) > 1e-8);
   if (saved?.version !== PDF_PREPARATION_VERSION || !layout || !positive(layout.height) || layout.height > 50_000_000
     || !Number.isFinite(layout.maxY) || layout.maxY < 0 || layout.maxY > layout.height
     || !positions(layout.pages) || layout.pages[0] !== 0 || !Array.isArray(layout.blockY) || !layout.blockY.every(n => Number.isFinite(n) && n >= 0) || !positions(layout.lineStarts)
@@ -32,14 +35,18 @@ export function unpackPdfPreparation(saved) {
     || !layout.blocks.every(block => positive(block.width) && positive(block.height) && positive(block.scale) && positive(block.drawHeight)
       && Number.isFinite(block.x) && Number.isFinite(block.y) && Number.isFinite(block.sourceY)
       && saved.pageScales.some(([page]) => page === block.page) && typeof block.text === 'string' && Array.isArray(block.lines)
-      && (!block.turn || ([90,270].includes(block.turn) && [0,90,180,270].includes(block.pageRotation)
-        && Array.isArray(block.sourceTransform) && block.sourceTransform.length === 6 && block.sourceTransform.every(Number.isFinite)
-        && Math.abs(block.sourceTransform[0]*block.sourceTransform[3]-block.sourceTransform[1]*block.sourceTransform[2]) > 1e-8))
+      && validTurn(block)
       && (!block.reflow || (positive(block.reflow.fontSize) && positive(block.reflow.lineHeight)
         && Array.isArray(block.reflow.rows) && block.reflow.rows.every(row => typeof row.text === 'string' && Number.isFinite(row.y)))))) {
     throw new Error('Saved PDF preparation is incomplete.');
   }
   layout.format = 'pdf'; layout.rows = [];
+  layout.annotations ||= [];
+  if (!Array.isArray(layout.annotations) || !layout.annotations.every(block => block.annotation?.kind === 'handwriting'
+    && positive(block.width) && positive(block.height) && positive(block.scale) && positive(block.drawHeight)
+    && [block.x, block.y, block.sourceY].every(Number.isFinite) && validTurn(block) && saved.pageScales.some(([page]) => page === block.page))) {
+    throw new Error('Saved PDF annotations are incomplete.');
+  }
   for (let y = 0; y < layout.height; y += 27) layout.rows.push({ y, height: 27 });
   preparePdfNative(layout); // Restore derived runs, including their Infinity endpoints.
   // Page boundaries are cheap derived data: update old overlap behavior without

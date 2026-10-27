@@ -343,6 +343,10 @@ export function createPdfLayout(pages, { fitFigures = true, textSize = 20, readi
   const height = Math.max(1, y - 12);
   const layout = { format: 'pdf', blocks, headings, blockY, lineStarts: lineStarts.sort((a, b) => a - b), height,
     maxY: Math.max(0, height - PDF_SCREEN, blocks.at(-1)?.y || 0), pages: [0], rows: [], size: textSize };
+  layout.annotations = pages.flatMap(page => (page.annotations || []).map(crop => {
+    const scale = Math.min(2, PDF_WIDTH / crop.width);
+    return { ...crop, page: page.number, sourceY: crop.y, y: 0, scale, drawHeight: Math.ceil(crop.height * scale) };
+  }));
   for (let position = 0; position < height; position += 27) layout.rows.push({ y: position, height: 27 });
   preparePdfNative(layout);
   while (layout.pages.at(-1) < layout.maxY) layout.pages.push(pdfPageTurn(layout, layout.pages.at(-1), 1));

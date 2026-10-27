@@ -8,6 +8,7 @@ import { PassageView } from './passage.js';
 import { updatePdfReader } from './pdf-progress.js';
 import { PdfPassageView } from './pdf-passage.js';
 import { PdfGallery } from './pdf-gallery.js';
+import { pdfAnnotationItems } from './pdf-captions.js';
 import { pdfAnchor, restorePdfAnchor, pdfPageTurn, PDF_WIDTH } from './pdf-layout.js';
 import { pdfReadingViews, nearbyPdfNote } from './pdf-notes.js';
 import { pdfNativeWindow, pdfImageEnd, PdfAutoscroll, pdfEntryLines } from './pdf-native.js';
@@ -131,6 +132,7 @@ const reader = new Reader({ onChange: changed });
 const passage = new PassageView($('passage'), y => jump(y));
 const pdfPassage = new PdfPassageView($('pdf-passage'), y => jump(y));
 const pdfGallery = new PdfGallery($('pdf-gallery'), $('figure-dialog'));
+const pdfAnnotations = new PdfGallery($('pdf-annotations'), $('annotation-dialog'), pdfAnnotationItems);
 reader.mode = preferences.mode === 'speed' ? 'speed' : ['auto', 'native'].includes(preferences.mode) ? 'auto' : 'page';
 reader.speed = autoSpeed(preferences.autoSpeed);
 reader.speedReading.rate = wordsPerMinute(preferences.wordSpeed);
@@ -539,6 +541,7 @@ function selectDocument(id, save = true) {
   pdfDocument?.destroy().catch(() => {}); pdfDocument = null; pdfBitmap = null; pdfOpenMessage = null; pdfRendering = false;
   pdfPassage.setLayout(null, 0);
   pdfGallery.setLayout(null);
+  pdfAnnotations.setLayout(null);
   active = snapshot?.documents.find(d => d.id === id) || null;
   diagnostics.renderer = active?.format === 'pdf' ? 'pdf-image' : 'native-text';
   layout = null;
@@ -710,6 +713,7 @@ function renderBookmarks() {
 function renderPassage() {
   if (WEB) { webReading?.update(); return; }
   pdfGallery.setLayout(layout?.format === 'pdf' ? layout : null);
+  pdfAnnotations.setLayout(layout?.format === 'pdf' ? layout : null);
   if (layout?.format === 'pdf') { passage.setLayout(null, 0); pdfPassage.setLayout(layout, reader.y); }
   else { passage.setLayout(layout, reader.y); pdfPassage.setLayout(null, 0); }
   lastPassage = layout ? rowAt(layout, reader.y) : -1;
@@ -1430,7 +1434,7 @@ previewInput = installPreviewInput($('preview'), {
   keyboardAllowed: event => {
     if (event.defaultPrevented || document.querySelector('dialog[open]')) return false;
     if (drawerQuery.matches && $('library-panel').dataset.open === 'true' && !$('reader-controls').contains(event.target)) return false;
-    return !$('figure-dialog').open && !event.target.closest?.('input, textarea, select, button, [contenteditable], #passage, #pdf-passage, #pdf-gallery, #ask-history, #ask-passage') && !!(active || picker || positionPicker || modePicker || previewMenu);
+    return !$('figure-dialog').open && !$('annotation-dialog').open && !event.target.closest?.('input, textarea, select, button, [contenteditable], #passage, #pdf-passage, #pdf-gallery, #pdf-annotations, #ask-history, #ask-passage') && !!(active || picker || positionPicker || modePicker || previewMenu);
   },
 });
 document.querySelector('.brand').onclick = event => { event.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); };

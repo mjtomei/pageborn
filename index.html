@@ -255,6 +255,10 @@
           <p class="eyebrow" id="figures-label">Figures &amp; tables</p>
           <div class="figure-strip" tabindex="0" role="region" aria-label="Figures and tables gallery"></div>
         </section>
+        <section id="pdf-annotations" aria-labelledby="annotations-label" hidden>
+          <p class="eyebrow" id="annotations-label">Written annotations</p>
+          <div class="figure-strip" tabindex="0" role="region" aria-label="Written annotations gallery"></div>
+        </section>
 
         <p class="muted" id="app-version"></p>
         <!-- debug:start --><details class="settings"><summary>Diagnostics · <span id="debug-version"></span></summary><p class="muted">Export error details and recent actions to help fix a problem. Includes app/browser versions and PDF processing steps, without attaching your files or extracted text.</p><button id="debug-export" class="secondary">Export debug log</button></details><!-- debug:end -->
@@ -287,6 +291,11 @@
       <header class="figure-heading"><h2 id="figure-title" class="figure-title"></h2><button type="button" class="figure-close text-button" aria-label="Close figure">Close</button></header>
       <div class="figure-stage"><div class="figure-image"></div><p class="figure-caption" tabindex="0" aria-label="Figure caption"></p><p class="figure-loading muted" role="status"></p></div>
       <footer class="figure-navigation"><button type="button" class="figure-previous secondary" aria-label="Previous figure">←</button><span class="figure-count muted"></span><button type="button" class="figure-next secondary" aria-label="Next figure">→</button></footer>
+    </dialog>
+    <dialog id="annotation-dialog" aria-labelledby="annotation-title">
+      <header class="figure-heading"><h2 id="annotation-title" class="figure-title"></h2><button type="button" class="figure-close text-button" aria-label="Close annotation">Close</button></header>
+      <div class="figure-stage"><div class="figure-image"></div><p class="figure-caption" tabindex="0" aria-label="Annotation caption"></p><p class="figure-loading muted" role="status"></p></div>
+      <footer class="figure-navigation"><button type="button" class="figure-previous secondary" aria-label="Previous annotation">←</button><span class="figure-count muted"></span><button type="button" class="figure-next secondary" aria-label="Next annotation">→</button></footer>
     </dialog>
     <dialog id="value-dialog" aria-labelledby="value-title" aria-describedby="value-help">
       <form id="value-form">

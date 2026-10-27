@@ -7,6 +7,7 @@ A reader for Even G2 glasses.
 - PDF body text reflowed into native glasses text
 - Markdown tables restacked one row at a time for the narrow display
 - Figures and tables from PDFs in a gallery on your phone
+- Underlined scan text reflowed as prose, with written margin annotations in a separate phone gallery
 - Timed autoscroll and speed reading
 - An experimental phone/iPad web reader that shares the desktop library and conversations
 

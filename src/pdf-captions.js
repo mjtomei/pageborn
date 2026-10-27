@@ -159,3 +159,9 @@ export function pdfGalleryItems(layout) {
     caption: block.figureCaption?.text || '',
   }));
 }
+
+export function pdfAnnotationItems(layout) {
+  if (layout?.format !== 'pdf') return [];
+  return (layout.annotations || []).map(block => ({ id: `annotation:${pdfFigureId(block.page, block)}`, block, page: block.page,
+    title: 'Written annotation', caption: '' }));
+}

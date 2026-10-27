@@ -1,7 +1,7 @@
 // All dimensions are CSS pixels. Measure the caption at its actual font size
 // and wrapping width; image and caption share a fixed viewport so changing the
 // chosen layout cannot feed back into its ResizeObserver.
-export function fitPdfGallery(width, height, availableWidth, availableHeight, measureCaption, { gap = 12, minCaptionWidth = 128 } = {}) {
+export function fitPdfGallery(width, height, availableWidth, availableHeight, measureCaption, { gap = 12, minCaptionWidth = 128, allowRotation = true } = {}) {
   const W = Math.max(1, availableWidth), H = Math.max(1, availableHeight);
   const candidates = [];
   const box = (x, y, width, height, rotate = false) => ({ x, y, width, height, rotate });
@@ -21,12 +21,12 @@ export function fitPdfGallery(width, height, availableWidth, availableHeight, me
     candidates.push({ scale, image, caption, placement: rotateCaption ? 'rotated-below' : 'below' });
   };
   below(false, false);
-  below(true, false);
+  if (allowRotation) below(true, false);
   // Tall figures can also use spare space beside them without rotating text.
   // Keep that column readable; do not squeeze the caption to a sliver merely
   // to win image area. Widen it into any remaining space after fitting.
   if (measureCaption(W) && minCaptionWidth <= W * .4) {
-    for (const rotate of [false, true]) {
+    for (const rotate of allowRotation ? [false, true] : [false]) {
       const iw = rotate ? height : width, ih = rotate ? width : height;
       const scale = Math.min((W - minCaptionWidth - gap) / iw, H / ih);
       const imageWidth = iw * scale;
@@ -38,6 +38,6 @@ export function fitPdfGallery(width, height, availableWidth, availableHeight, me
     }
   }
   // Prefer upright captions on ties, and rotate only for a larger figure.
-  below(true, true);
+  if (allowRotation) below(true, true);
   return candidates.reduce((best, candidate) => candidate.scale > best.scale + 1e-6 ? candidate : best);
 }
