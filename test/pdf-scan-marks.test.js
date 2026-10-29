@@ -78,7 +78,7 @@ test('a spurious tiny word can be removed from a printed line without deleting t
 });
 test('annotation gallery is separate from reading/figures and survives preparation cache reload', () => {
   const note = { x: 520, y: 150, width: 60, height: 80, kind: 'figure', text: '', lines: [], annotation: { kind: 'handwriting' } };
-  const body = { x: 80, y: 100, width: 400, height: 500, kind: 'text', text: 'Printed words', lines: [] };
+  const body = { x: 80, y: 100, width: 400, height: 500, kind: 'text', text: 'Printed words', lines: [], reflow: { text: 'Printed words', height: 27, fontSize: 20, lineHeight: 27, rows: [{ text: 'Printed words', y: 0, items: [] }] } };
   const layout = createPdfLayout([{ number: 1, blocks: [body], annotations: [note] }]);
   assert.equal(layout.blocks.length, 1); assert.deepEqual(pdfGalleryItems(layout), []);
   const item = pdfAnnotationItems(layout)[0]; assert.equal(item.block.sourceY, 150); assert.equal(item.page, 1);

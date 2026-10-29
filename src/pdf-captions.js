@@ -156,7 +156,7 @@ export function pdfGalleryItems(layout) {
   const images = layout.blocks.flatMap(block => {
     if (block.originalPage && block.digitizationCredit) return [{ ...block, ...block.originalPage, x: 0, sourceY: 0,
       kind: 'figure', fullPage: true, reflow: undefined, lines: [], text: '', figureCaption: undefined }];
-    return block.kind === 'figure' && !block.annotationLabel ? [block] : [];
+    return !block.reflow && !block.annotationLabel ? [block] : [];
   });
   return images.map(block => ({
     id: block.figureId || pdfFigureId(block.page, block), block, page: block.page,

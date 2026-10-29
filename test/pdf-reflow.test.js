@@ -168,18 +168,23 @@ test('reflow bookmarks retain text position across sizes and return to source im
   assert.ok(Math.abs(pdfAnchor(raster, imageY).pdf.y - anchor.pdf.y) < 1);
 });
 
-test('paging defers a fitting figure intact and keeps oversized figures scrollable', () => {
-  const make = (width, height, fitFigures = true) => createPdfLayout([{ number: 1, blocks: [
-    { ...prose(), height: 90 },
-    { x: 50, y: 180, width, height, fillWidth: true, kind: 'figure', lines: [], text: '' },
-    { ...prose(), y: 700 },
-  ] }], { fitFigures });
-  const layout = make(400, 260); const figure = layout.blocks[1];
-  assert.equal(figure.drawHeight, PDF_SCREEN); assert.equal(figure.keepTogether, true);
-  assert.equal(pdfPageTurn(layout, 0, 1), figure.y);
-  assert.ok(pdfPageTurn(layout, figure.y, 1) <= figure.y + PDF_SCREEN);
-  assert.equal(make(400, 900).blocks[1].keepTogether, false);
-  assert.equal(make(400, 260, false).blocks[1].keepTogether, false);
+test('every raster block fits a single pane, regardless of shape, kind or retired fit setting', () => {
+  for (const kind of ['figure', 'scan', 'text']) for (const height of [30, 260, 900, 9000]) {
+    const layout = createPdfLayout([{ number: 1, blocks: [
+      { ...prose(), reflow: reflowPdfBlock(prose()) },
+      { x: 50, y: 400, width: 400, height, fillWidth: true, kind, lines: [], text: '' },
+      { x: 50, y: 10000, width: 400, height: 80, kind: 'figure', lines: [], text: '' },
+      { ...prose(), y: 11000, reflow: reflowPdfBlock(prose()) },
+    ] }], { fitFigures: false });
+    const image = layout.blocks[1];
+    assert.ok(image.drawHeight <= PDF_SCREEN); assert.equal(image.keepTogether, true);
+    assert.equal(image.height, height, 'source resolution is retained');
+    assert.ok(layout.pages.includes(image.y), 'text ends before the complete image pane');
+    assert.equal(pdfPageTurn(layout, image.y, 1), layout.blocks[2].y);
+    assert.equal(pdfPageTurn(layout, layout.blocks[2].y, 1), layout.blocks[3].y);
+    assert.equal(pdfPageTurn(layout, layout.blocks[2].y, -1), image.y);
+    assert.equal(layout.pages.filter(y => y >= image.y && y < layout.blocks[2].y).length, 1);
+  }
 });
 
 test('tiny scan debris does not become an oversized screen', () => {

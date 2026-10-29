@@ -84,8 +84,8 @@ export class PdfDocument {
       throw error;
     }
   }
-  async prepare(content, mode, onProgress, { keepMarginNotes = false, keepRepeatedText = false, normalizeColors = true, reflow = true, textSize = 20, fitFigures = true, onPartial } = {}) {
-    this.checkpoint('initializing', { pdfjsVersion, encodedBytes: content.length, mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures });
+  async prepare(content, mode, onProgress, { keepMarginNotes = false, keepRepeatedText = false, normalizeColors = true, reflow = true, textSize = 20, onPartial } = {}) {
+    this.checkpoint('initializing', { pdfjsVersion, encodedBytes: content.length, mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize });
     await this.yieldPreparation();
     this.normalizeColors = normalizeColors;
     this.warnings = []; this.ocr = new PdfOcr();
@@ -97,7 +97,7 @@ export class PdfDocument {
       this.checkpoint('checking-preparation-cache');
       onProgress('Opening saved PDF…');
       try {
-        cacheKey = await pdfPreparationKey(data, { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures }, pdfjsVersion);
+        cacheKey = await pdfPreparationKey(data, { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize }, pdfjsVersion);
         const saved = await this.preparationCache.read(cacheKey);
         if (saved) restored = unpackPdfPreparation(saved);
         this.diagnostics?.log(restored ? 'pdf-cache-hit' : 'pdf-cache-miss', { selection: this.selection });
@@ -134,7 +134,7 @@ export class PdfDocument {
       return this.layout;
     }
     this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors, this.work);
-    const settings = { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures, measure };
+    const settings = { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, measure };
     const earlyPages = []; const earlyPreparations = []; let earlyEndMatter = false;
     // Keep only layout objects already needed by the readable prefix, never
     // full-page pixels. Whole-document analysis can change footnotes, running
@@ -293,7 +293,7 @@ export class PdfDocument {
     const bodySize = pdfBodySize(textPages);
     return { repeatedMasks, bodySize, noteStyle: pdfFootnoteStyle(textPages, bodySize) };
   }
-  buildLayout(sourcePages, { reflow, keepRepeatedText, measure, textSize, fitFigures }) {
+  buildLayout(sourcePages, { reflow, keepRepeatedText, measure, textSize }) {
     // Section ordering annotates its input. Snapshots must not mutate crops
     // that an earlier reader or preview is still using.
     let pages = sourcePages.map(page => ({ ...page, blocks: page.blocks.map(block => ({ ...block,
@@ -304,7 +304,7 @@ export class PdfDocument {
       const block = labelPdfAnnotation(entry.block, measure, textSize);
       return block.annotationLabel ? [{ ...entry, block }, entry] : [{ ...entry, block }];
     }) : null;
-    const layout = createPdfLayout(pages, { fitFigures, textSize, readingOrder });
+    const layout = createPdfLayout(pages, { textSize, readingOrder });
     layout.pdf = { draw: (y, height, inverted, options) => this.draw(y, height, inverted, { ...options, layout: options?.layout || layout }),
       drawFigure: (block, options) => this.drawFigure(block, options) };
     layout.sourcePages = pages;

@@ -156,7 +156,7 @@ export function speedEntries(layout) {
       const start = entries.length;
       const source = `${block.page}:${block.x}:${block.sourceY}:${block.width}:${block.height}:${block.annotationLabel || ''}`;
       if (!block.reflow) {
-        // A tall figure has several manual screens; none are timed or skipped.
+        // Prepared images fit one manual screen; images are never timed or skipped.
         for (let y = block.y; y < block.y + block.drawHeight; y += BODY_HEIGHT) entries.push({ image: true, y, endAt: block.y + block.drawHeight, page: block.page,
           key: `${source}:image:${y - block.y}` });
         continue;

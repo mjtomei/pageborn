@@ -566,14 +566,14 @@ function selectDocument(id, save = true) {
       reader.setDocument(0); notice('Opening PDF…');
       pdfOpenMessage = { body: 'Opening PDF…', status: 'Loading', kind: 'loading' };
       pdfDocument = new PdfDocument({ diagnostics, selection: version, preparationCache: pdfPreparationCache.forDocument(active.id) }); const opening = pdfDocument;
-      const { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures } = pdfSettingsFor(preferences, documentKey());
+      const { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize } = pdfSettingsFor(preferences, documentKey());
       $('pdf-layout').value = mode;
       $('pdf-margin-notes').checked = keepMarginNotes;
       $('pdf-repeated-text').checked = keepRepeatedText;
       $('pdf-colors').checked = normalizeColors;
       $('pdf-default-status').textContent = '';
       $('pdf-reflow').checked = reflow; $('pdf-text-size').value = String(textSize);
-      $('pdf-text-size-control').hidden = !reflow; $('pdf-fit-figures').checked = fitFigures;
+      $('pdf-text-size-control').hidden = !reflow;
       const savedPosition = preferences.positions[documentKey()];
       let progressText = 'Opening PDF…'; let progressAt = 0;
       pdfProgressRefresh = (force = false) => {
@@ -622,7 +622,7 @@ function selectDocument(id, save = true) {
       askUI.speech.releaseForReading().then(() => opening.open(content, mode, text => {
         if (version !== selectionVersion) return;
         progressText = text; pdfProgressRefresh?.();
-      }, { keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, fitFigures, onPartial: acceptLayout })).then(acceptLayout).catch(error => {
+      }, { keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, onPartial: acceptLayout })).then(acceptLayout).catch(error => {
         if (error !== opening.openError) opening.report('pdf-open-error', error);
         if (!layout || version !== selectionVersion) opening.destroy().catch(() => {});
         else opening.ocr?.destroy().catch(() => {});
@@ -1319,7 +1319,7 @@ for (const link of document.querySelectorAll('.settings-jump a')) link.onclick =
 };
 for (const [id, field, type] of [['pdf-layout', 'mode', 'value'], ['pdf-margin-notes', 'keepMarginNotes', 'checked'],
   ['pdf-colors', 'normalizeColors', 'checked'], ['pdf-reflow', 'reflow', 'checked'], ['pdf-text-size', 'textSize', 'value'],
-  ['pdf-fit-figures', 'fitFigures', 'checked'], ['pdf-repeated-text', 'keepRepeatedText', 'checked']]) {
+  ['pdf-repeated-text', 'keepRepeatedText', 'checked']]) {
   $(id).onchange = () => {
     if (active?.format !== 'pdf') return;
     rememberPosition();

@@ -93,6 +93,16 @@ export function analyzePdfPage({ width, height, data, text = [], figureText = te
   };
   const bounds = crop(0, 0, width, height);
   if (!bounds) return { blocks: [], columns: false, bounds: null, marginMasks };
+  // Embedded charts often contain white padding wider than every visible
+  // mark on the page. Intersect their bounds with the page's visible extent
+  // before testing region containment, or each chart band becomes a crop.
+  // Full-page scans retain their original bounds for scan classification.
+  images = images.map(image => {
+    if (image.width * image.height >= width * height * .85) return image;
+    const x = Math.max(bounds.x, image.x), y = Math.max(bounds.y, image.y);
+    return { ...image, x, y, width: Math.min(bounds.x + bounds.width, image.x + image.width) - x,
+      height: Math.min(bounds.y + bounds.height, image.y + image.height) - y };
+  }).filter(image => image.width > 0 && image.height > 0);
   const x0 = bounds.x; const x1 = x0 + bounds.width;
   const y0 = bounds.y; const y1 = y0 + bounds.height;
   // Some PDFs outline their body glyphs, leaving only toolbar text in the text
@@ -289,7 +299,7 @@ export function analyzePdfPage({ width, height, data, text = [], figureText = te
 export function pdfPageTurn(layout, y, direction) {
   if (direction < 0) return layout.pages.findLast(value => value < y - .5) ?? Math.max(0, y - PDF_SCREEN + 27);
   const current = layout.blocks.findLastIndex(block => block.y <= y + .5);
-  if (layout.blocks[current]?.fullPage) return Math.min(layout.maxY, layout.blocks[current + 1]?.y ?? layout.maxY);
+  if (layout.blocks[current] && !layout.blocks[current].reflow) return Math.min(layout.maxY, layout.blocks[current + 1]?.y ?? layout.maxY);
   const native = pdfNativeWindow(layout, y);
   if (native) return native.nextY;
   const textStart = pdfImageEnd(layout, y);
@@ -301,12 +311,11 @@ export function pdfPageTurn(layout, y, direction) {
   const start = layout.blocks.findLast(block => block.y > y + 27 && block.y <= end - 12)?.y;
   if (start != null) return start;
   const target = Math.min(layout.maxY, y + PDF_SCREEN - 27);
-  // Long paragraphs/figures advance within their image without skipping any
-  // pixels. Prefer a text line's top if it is close to the screen boundary.
+  // Prefer a text line's top when an unaligned position is close to a boundary.
   return layout.lineStarts.findLast(value => value > y + 27 && value <= target && value >= target - 35) ?? target;
 }
 
-export function createPdfLayout(pages, { fitFigures = true, textSize = 20, readingOrder = null } = {}) {
+export function createPdfLayout(pages, { textSize = 20, readingOrder = null } = {}) {
   const blocks = []; const headings = []; const blockY = []; const lineStarts = []; let y = 0;
   for (const page of pages) {
     const heading = { index: headings.length, text: `PDF page ${page.number}`, level: 1 };
@@ -321,9 +330,9 @@ export function createPdfLayout(pages, { fitFigures = true, textSize = 20, readi
     if (page.blocks.some(block => block.reflow) && crop.kind === 'scan' && !crop.lines.length
       && crop.height <= 8 && crop.width >= Math.max(80, crop.height * 40)) continue;
     let scale = Math.min(crop.fillWidth ? (crop.maxScale ?? 4) : 2, PDF_WIDTH / crop.width);
-    // Covers and full-page plates always occupy one pane. Other very tall
-    // diagrams retain continuous scrolling unless they fit at a readable width.
-    if (crop.fullPage || fitFigures && crop.kind === 'figure' && crop.width * PDF_SCREEN / crop.height >= PDF_WIDTH * .5) {
+    // Every raster block occupies one glasses pane. Source geometry stays
+    // intact so the phone gallery can render it at a larger resolution.
+    if (!crop.reflow) {
       scale = Math.min(scale, PDF_SCREEN / crop.height);
     }
     const block = { ...crop, sourceY: crop.y, y, page: page.number, scale, drawHeight: Math.ceil(crop.height * scale - 1e-8) };
@@ -333,7 +342,7 @@ export function createPdfLayout(pages, { fitFigures = true, textSize = 20, readi
       block.lines = crop.lines.map(line => ({ ...line, displayY: crop.reflow.rows.find(row => row.items.includes(line))?.y ?? 0 }));
       lineStarts.push(...crop.reflow.rows.map(row => y + row.y));
     }
-    block.keepTogether = crop.kind === 'figure' && block.drawHeight <= PDF_SCREEN;
+    block.keepTogether = !crop.reflow;
     blocks.push(block);
     if (!crop.reflow && crop.kind !== 'figure') for (const line of crop.lines) lineStarts.push(y + Math.max(0, line.y - crop.y) * scale);
     y += block.drawHeight + 12;

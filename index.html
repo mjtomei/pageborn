@@ -187,7 +187,7 @@
             <h4 class="section-label">Formatting</h4>
             <p id="pdf-saved-note" class="muted">Saved for this PDF only. Changes rebuild the preview and keep your place; the original file isn't changed.</p>
             <p id="pdf-reflow-help" class="muted"><strong>Reflow body text:</strong> Prose uses the glasses’ native text; figures, tables and equations stay images. Scans use on-device OCR, which can be slow and may contain errors.</p>
-            <p id="pdf-figures-help" class="muted"><strong>Fit figures to one screen:</strong> Very tall figures stay scrollable. Turn off for more detail in dense figures.</p>
+            <p class="muted">Images always fit on one glasses pane. Open the gallery on your phone for a larger view.</p>
             <p id="pdf-margin-help" class="muted"><strong>Keep margin notes:</strong> Side notes and stamps. Only those lines shrink to fit.</p>
             <p id="pdf-repeated-help" class="muted"><strong>Keep headers &amp; page numbers:</strong> off hides page numbers, running headers and footers, and download watermarks.</p>
             <p id="pdf-colors-help" class="muted"><strong>Normalize PDF colors:</strong> Dark ink on light paper here, bright ink on the glasses.</p>
@@ -196,7 +196,6 @@
               <label class="setting-row switch-row"><span>Reflow body text</span><input id="pdf-reflow" type="checkbox" role="switch" aria-describedby="pdf-reflow-help"></label>
               <label id="pdf-text-size-control" class="setting-row sub-row" hidden>Preview text size <select id="pdf-text-size"><option value="20" selected>Small · 20</option><option value="24">Medium · 24</option><option value="28">Large · 28</option></select></label>
             </div>
-            <label class="setting-row switch-row"><span>Fit figures to one screen</span><input id="pdf-fit-figures" type="checkbox" role="switch" checked aria-describedby="pdf-figures-help"></label>
             <label class="setting-row switch-row"><span>Keep margin notes</span><input id="pdf-margin-notes" type="checkbox" role="switch" aria-describedby="pdf-margin-help"></label>
             <label class="setting-row switch-row"><span>Keep headers &amp; page numbers</span><input id="pdf-repeated-text" type="checkbox" role="switch" aria-describedby="pdf-repeated-help"></label>
             <label class="setting-row switch-row"><span>Normalize PDF colors</span><input id="pdf-colors" type="checkbox" role="switch" checked aria-describedby="pdf-colors-help"></label>

@@ -36,6 +36,20 @@ test('PDF mixed columns retain full-width sections and read each column top to b
   assert.equal(analyzePdfPage({ ...p, mode: 'single' }).columns, false);
 });
 
+test('white padding around an embedded chart does not split its disconnected bars into images', () => {
+  const p = page();
+  p.images.push({ x: 40, y: 40, width: 520, height: 410 });
+  for (const [y, width] of [[60, 400], [130, 200], [230, 240], [340, 440], [420, 300]]) p.rectangle(65, y, width, 15);
+  p.paragraph('BelowChart', 50, 500, 480);
+  for (const mode of ['auto', 'single']) {
+    const result = analyzePdfPage({ ...p, mode });
+    const images = result.blocks.filter(b => b.kind === 'figure');
+    assert.equal(images.length, 1);
+    assert.ok(images[0].y <= 60 && images[0].y + images[0].height >= 435);
+    assert.ok(!images[0].text.includes('BelowChart'));
+  }
+});
+
 test('magazine rules around a two-column brief do not turn its contents into a figure', () => {
   const p = page(); p.rectangle(50, 70, 500, 2); p.rectangle(50, 600, 500, 2);
   p.paragraph('LeftBrief is a full sentence in this column', 50, 110, 220, 18);
@@ -305,13 +319,13 @@ test('outlined body glyphs retain paragraphs and a consistent size on short last
   assert.ok(body[0].height >= 280);
 });
 
-test('PDF paging favors block starts, covers tall blocks without gaps and restores image positions', () => {
+test('PDF paging fits images on separate panes and restores image positions', () => {
   const layout = createPdfLayout([{ number: 1, blocks: [100, 120, 700, 50].map((height, i) => ({ x: 50, y: i * 800 + 20, width: 576, height, text: `Block ${i}`, lines: [] })) }]);
-  assert.equal(pdfPageTurn(layout, 0, 1), layout.blocks[2].y, 'next paragraph begins at top');
+  assert.equal(pdfPageTurn(layout, 0, 1), layout.blocks[1].y, 'next image begins its own pane');
   let end = 0;
-  for (const y of layout.pages) { assert.ok(y <= end); end = y + PDF_SCREEN; }
+  for (const y of layout.pages) { assert.ok(y <= end + 12); end = y + PDF_SCREEN; }
   assert.ok(end >= layout.height); assert.equal(layout.pages.at(-1), layout.maxY);
-  const middle = layout.blocks[2].y + 333;
+  const middle = layout.blocks[2].y + 100;
   assert.equal(restorePdfAnchor(layout, pdfAnchor(layout, middle)), middle);
   assert.ok(pdfPageTurn(layout, middle, 1) > middle);
 });

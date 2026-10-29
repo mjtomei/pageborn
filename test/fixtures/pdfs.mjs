@@ -2,10 +2,11 @@
 // third-party PDFs or user documents are needed for the regression suite.
 import { deflateSync } from 'node:zlib';
 
-export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [], jpeg2000 = false, pages = 1 } = {}) {
+export function scannedPdfFixture(width, height, pixels, { bilevel = false, textLayer = [], jpeg2000 = false, pages = 1, imageBox = [0, 0, 600, 800], visibleText = false } = {}) {
   const compressed = jpeg2000 ? pixels : deflateSync(pixels);
-  const stream = `q 600 0 0 800 0 0 cm /Scan Do Q\n` + textLayer.map(({ text, x, y, size = 24 }) =>
-    `BT 3 Tr /F1 ${size} Tf 1 0 0 1 ${x} ${800 - y} Tm (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`).join('\n');
+  const [x, y, w, h] = imageBox;
+  const stream = `q ${w} 0 0 ${h} ${x} ${y} cm /Scan Do Q\n` + textLayer.map(({ text, x, y, size = 24 }) =>
+    `BT ${visibleText ? 0 : 3} Tr /F1 ${size} Tf 1 0 0 1 ${x} ${800 - y} Tm (${text.replace(/[\\()]/g, '\\$&')}) Tj ET`).join('\n');
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
@@ -99,7 +100,7 @@ export function pdfFixture(kind = 'mixed') {
       pages.push(commands.join('\n'));
     }
   } else if (kind === 'figure') {
-    text('Tall figure remains one scrollable image', 60, 40, 20);
+    text('Tall figure stays whole on one pane', 60, 40, 20);
     commands.push('2 w 100 90 400 620 re S');
     for (let y = 120; y <= 680; y += 80) commands.push(`100 ${y} m 500 ${y} l S`);
     text('FigureTop', 180, 115, 18); text('FigureBottom', 180, 690, 18);

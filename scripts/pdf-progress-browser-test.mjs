@@ -128,7 +128,7 @@ try {
   result.readyPrefixWithLaterSave = true;
   // Stop preparation after its first usable page, then change documents.
   await jump('0'); await page.evaluate(() => { window.__holdFrom = 1; });
-  await page.locator('#pdf-fit-figures').uncheck(); await partial(1);
+  await page.locator('#pdf-colors').uncheck(); await partial(1);
   await showLibrary(page); await page.locator('[data-document-id="other.md"] .document-card').click();
   await page.evaluate(() => window.__release());
   await expect(page.locator('#title')).toHaveText('Another document');

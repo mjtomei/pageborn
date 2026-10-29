@@ -65,14 +65,14 @@ test('column captions use their own figures, explicit split ownership wins, unma
   assert.equal(associatePdfCaptions([page([top, near, separate])]).get(top), separate);
 });
 
-test('gallery excludes equations and caption labels; serialized metadata retains captions', () => {
+test('gallery includes unreflowed equations but excludes native text and caption labels', () => {
   const image = figure(30, 200); const c = caption('Figure 1: Complete caption.', 30, 310);
   associatePdfCaptions([page([image, c])]);
-  const layout = { format: 'pdf', blocks: [{ ...image, page: 1, sourceY: image.y, y: 800 }, c,
-    { ...figure(30, 400), kind: 'text', text: 'x = y' }, { ...image, annotationLabel: true }] };
+  const layout = { format: 'pdf', blocks: [{ ...image, page: 1, sourceY: image.y, y: 800 }, { ...c, reflow: {} },
+    { ...figure(30, 400), page: 1, kind: 'text', text: 'x = y' }, { ...image, annotationLabel: true }] };
   const [item] = pdfGalleryItems(layout);
-  assert.equal(pdfGalleryItems(layout).length, 1); assert.equal(item.caption, c.text);
-  assert.deepEqual(pdfGalleryItems(JSON.parse(JSON.stringify(layout))), JSON.parse(JSON.stringify([item])));
+  assert.equal(pdfGalleryItems(layout).length, 2); assert.equal(item.caption, c.text);
+  assert.deepEqual(pdfGalleryItems(JSON.parse(JSON.stringify(layout))), JSON.parse(JSON.stringify(pdfGalleryItems(layout))));
 });
 
 test('independent neighboring captions split only through empty pixels without losing text', () => {

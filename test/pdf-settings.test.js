@@ -38,3 +38,8 @@ test('legacy PDFs retain factory fallback and explicit per-file choices after de
 test('PDF defaults contain only supported formatting fields, never shared reading behavior', () => {
   assert.deepEqual(normalizePdfSettings({ mode: 'sideways', textSize: -1, reflow: 'false', wordSpeed: 600, pauseAtTitles: true }), PDF_DEFAULTS);
 });
+
+test('retired image splitting preferences cannot override fitting on one pane', () => {
+  const prefs = { pdfDefaults: { fitFigures: false }, pdfSettings: { old: { ...PDF_DEFAULTS, fitFigures: false } }, pdfFitFigures: { legacy: false } };
+  for (const key of ['old', 'new', 'legacy']) assert.deepEqual(pdfSettingsFor(prefs, key), PDF_DEFAULTS);
+});

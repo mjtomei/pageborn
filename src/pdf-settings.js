@@ -1,7 +1,7 @@
 export const PDF_DEFAULTS = Object.freeze({ mode: 'auto', keepMarginNotes: false, keepRepeatedText: false,
-  normalizeColors: true, reflow: true, textSize: 20, fitFigures: true });
+  normalizeColors: true, reflow: true, textSize: 20 });
 const legacyFields = { mode: 'pdfLayouts', keepMarginNotes: 'pdfMarginNotes', keepRepeatedText: 'pdfRepeatedText',
-  normalizeColors: 'pdfNormalizeColors', reflow: 'pdfReflow', textSize: 'pdfTextSizes', fitFigures: 'pdfFitFigures' };
+  normalizeColors: 'pdfNormalizeColors', reflow: 'pdfReflow', textSize: 'pdfTextSizes' };
 
 export function normalizePdfSettings(settings = {}) {
   const result = { ...PDF_DEFAULTS };
@@ -23,6 +23,7 @@ export function pdfSettingsFor(preferences, key) {
     const existing = preferences.positions?.[key]?.pdf || Object.keys(legacy).length;
     preferences.pdfSettings[key] = normalizePdfSettings({ ...(existing ? PDF_DEFAULTS : preferences.pdfDefaults), ...legacy });
   }
+  delete preferences.pdfSettings[key].fitFigures;
   return preferences.pdfSettings[key];
 }
 
@@ -34,5 +35,5 @@ export function usePdfDefaults(preferences, key) {
 
 export function forgetPdfSettings(preferences, key) {
   if (preferences.pdfSettings) delete preferences.pdfSettings[key];
-  for (const field of Object.values(legacyFields)) if (preferences[field]) delete preferences[field][key];
+  for (const field of [...Object.values(legacyFields), 'pdfFitFigures']) if (preferences[field]) delete preferences[field][key];
 }

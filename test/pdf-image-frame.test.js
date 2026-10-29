@@ -14,16 +14,11 @@ test('short images have equal top/bottom space and do not pull in adjacent prose
   assert.deepEqual(pdfImageFrame(layout, 504, 258), { y: 504, end: 762, top: 0 }, 'prose is not centered');
 });
 
-test('adjacent equations fit together, but speed-reading image boundaries isolate each one', () => {
+test('neighboring images each occupy their own pane, including during autoscroll', () => {
   const layout = { blocks: [image(0, 40), image(52, 60), prose(124)] };
-  assert.deepEqual(pdfImageFrame(layout, 0, 258), { y: 0, end: 112, top: 73 });
+  for (const y of [0, 27, 45]) assert.deepEqual(pdfImageFrame(layout, y, 258), { y: 0, end: 40, top: 109 });
   assert.deepEqual(pdfImageFrame(layout, 0, 258, 40), { y: 0, end: 40, top: 109 });
   assert.deepEqual(pdfImageFrame(layout, 52, 258, 112), { y: 52, end: 112, top: 99 });
-});
-
-test('tall images and larger image runs retain their scrolling position and pixels', () => {
-  const tall = { blocks: [image(0, 700), prose(712)] };
-  for (const y of [0, 100, 231, 462, 600]) assert.deepEqual(pdfImageFrame(tall, y, 258), { y, end: y + 258, top: 0 });
-  assert.deepEqual(pdfImageFrame({ blocks: [image(0, 200), image(212, 200)] }, 0, 258), { y: 0, end: 258, top: 0 });
-  assert.deepEqual(pdfImageFrame({ blocks: [image(0, 258)] }, 0, 258), { y: 0, end: 258, top: 0 });
+  assert.deepEqual(pdfImageFrame({ blocks: [image(0, 200), image(212, 200)] }, 0, 258), { y: 0, end: 200, top: 29 });
+  assert.deepEqual(pdfImageFrame({ blocks: [image(0, 258)] }, 100, 258), { y: 0, end: 258, top: 0 });
 });

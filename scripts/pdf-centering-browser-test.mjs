@@ -5,9 +5,9 @@ import { createApp } from '../server/app.js';
 import { access, mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { pdfFixture } from '../test/fixtures/pdfs.mjs';
+import { pdfFixture, scannedPdfFixture } from '../test/fixtures/pdfs.mjs';
 
-const dir = path.resolve('test-results/pdf-centering'); await mkdir(dir, { recursive: true });
+const dir = path.resolve(process.env.PDF_CENTERING_RESULTS || 'test-results/pdf-centering'); await mkdir(dir, { recursive: true });
 const bundle = path.join(dir, 'bundle'); const entry = path.join(dir, 'entry.js');
 await writeFile(entry, `export { PdfDocument } from ${JSON.stringify(path.resolve('src/pdf.js'))};`);
 await build({ build: { outDir: bundle, emptyOutDir: true, lib: { entry, formats: ['es'], fileName: () => 'centering.js' } } });
@@ -26,7 +26,13 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/__pdf-test`);
   await page.evaluate(async () => { window.PdfDocument = (await import('/centering.js')).PdfDocument; });
   await context.setOffline(true);
-  for (const kind of ['mixed', 'equation', 'figure']) {
+  const chart = Buffer.alloc(520 * 410 * 3, 255);
+  for (const [y, width] of [[20, 400], [90, 200], [190, 240], [300, 440], [380, 300]])
+    for (let yy = y; yy < y + 15; yy++) for (let x = 25; x < 25 + width; x++) chart.fill(0, (yy * 520 + x) * 3, (yy * 520 + x) * 3 + 3);
+  const paddedChart = scannedPdfFixture(520, 410, chart, { imageBox: [40, 350, 520, 410], visibleText: true,
+    textLayer: Array.from({ length: 8 }, (_, i) => ({ x: 50, y: 500 + 16 * i, size: 12,
+      text: 'Prose below the chart must stay readable and separate from its plotted bars.' })) });
+  for (const kind of ['mixed', 'equation', 'figure', 'padded-chart']) {
     const sample = await page.evaluate(async ({ kind, bytes }) => {
       const bounds = canvas => {
         const { width, height } = canvas; const data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
@@ -40,13 +46,14 @@ try {
       const pdf = new PdfDocument({ preparationCache: cache }); const layout = await pdf.open(bytes, 'auto');
       const image = layout.blocks.find(block => !block.reflow && (kind === 'equation' ? block.text.includes('x^2') : block.kind === 'figure'));
       if (!image) throw new Error(`Missing ${kind} image`);
+      const gallery = await pdf.drawFigure(image);
       const endAt = image.y + image.drawHeight;
       const raw = await pdf.draw(image.y, 258, true, { paging: true, endAt });
       const centered = await pdf.draw(image.y, 258, true, { paging: true, endAt, centerImages: true });
       const scroll = await pdf.draw(image.y + 27, 258, true, { endAt, centerImages: true });
       const scrollRaw = await pdf.draw(image.y + 27, 258, true, { endAt });
       const unchangedPreview = await pdf.draw(image.y, 258, true, { paging: true, endAt });
-      const output = { kind, drawHeight: image.drawHeight, rasterKind: image.kind, before: bounds(raw), after: bounds(centered),
+      const output = { kind, gallerySize: [gallery.width, gallery.height], imageCount: layout.blocks.filter(b => !b.reflow).length, drawHeight: image.drawHeight, rasterKind: image.kind, before: bounds(raw), after: bounds(centered),
         centered: centered.toDataURL(), raw: raw.toDataURL(), scroll: scroll.toDataURL(), scrollRaw: scrollRaw.toDataURL(),
         previewUnchanged: raw.toDataURL() === unchangedPreview.toDataURL(), originalGeometry: [image.x, image.sourceY, image.width, image.height] };
       await pdf.destroy();
@@ -55,26 +62,22 @@ try {
       output.cached = second.progress.cached;
       output.restored = (await second.draw(cachedImage.y, 258, true, { paging: true, endAt: cachedImage.y + cachedImage.drawHeight, centerImages: true })).toDataURL();
       await second.destroy(); return output;
-    }, { kind, bytes: pdfFixture(kind).toString('base64') });
+    }, { kind, bytes: (kind === 'padded-chart' ? paddedChart : pdfFixture(kind)).toString('base64') });
     assert.ok(sample.after.width > 0); assert.ok(sample.previewUnchanged); assert.ok(sample.cached);
     assert.equal(sample.restored, sample.centered, 'cached preparations get identical centered rendering');
-    if (kind === 'figure') {
-      assert.ok(sample.drawHeight > 258); assert.equal(sample.centered, sample.raw, 'tall figure starts unchanged');
-      assert.equal(sample.scroll, sample.scrollRaw, 'tall figure scroll is unchanged');
-      assert.notEqual(sample.scroll, sample.centered, 'scrolling a tall figure still moves it');
-    } else {
-      assert.ok(sample.drawHeight < 258); assert.ok(sample.after.top > 20);
-      assert.ok(Math.abs(sample.after.left - sample.after.right) <= 6, `horizontal margins: ${JSON.stringify(sample.after)}`);
-      assert.ok(Math.abs(sample.after.top - sample.after.bottom) <= 6, `vertical margins: ${JSON.stringify(sample.after)}`);
-      assert.equal(sample.scroll, sample.centered, 'short image stays intact during its autoscroll interval');
-      assert.equal(sample.after.width, sample.before.width, 'scale preserved');
-      assert.equal(sample.after.height, sample.before.height, 'all pixels preserved');
-    }
+    assert.ok(sample.drawHeight <= 258);
+    assert.equal(sample.scroll, sample.centered, 'every image stays complete while autoscroll traverses it');
+    assert.ok(Math.abs(sample.after.left - sample.after.right) <= 6, `horizontal margins: ${JSON.stringify(sample.after)}`);
+    assert.ok(Math.abs(sample.after.top - sample.after.bottom) <= 6, `vertical margins: ${JSON.stringify(sample.after)}`);
+    assert.equal(sample.after.width, sample.before.width, 'centering preserves fitted scale');
+    assert.equal(sample.after.height, sample.before.height, 'centering preserves all pixels');
+    assert.ok(sample.gallerySize[1] > sample.drawHeight, 'gallery retains larger source rendering');
+    if (kind === 'padded-chart') assert.equal(sample.imageCount, 1, 'white-padded chart is one complete image');
     for (const name of ['raw', 'centered']) await writeFile(path.join(dir, `${kind}-${name}.png`), Buffer.from(sample[name].split(',')[1], 'base64'));
     const { centered, raw, scroll, scrollRaw, restored, ...stats } = sample; result.samples.push(stats);
   }
   assert.deepEqual(result.errors, []); result.passed = true;
-  console.log('PASS: real figure/equation pixels centered; tall scroll, scale, source geometry, continuous preview and cached rendering preserved.');
+  console.log('PASS: whole figures, equations and white-padded charts fit one pane, hold during autoscroll, reopen from cache and retain larger gallery rendering.');
 } finally {
   await writeFile(path.join(dir, 'result.json'), JSON.stringify(result, null, 2));
   await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
