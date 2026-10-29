@@ -21,8 +21,8 @@ import { safeTimeout as setTimeout, cancelTimeout as clearTimeout } from './time
 
 const $ = id => document.getElementById(id);
 export class AskUI {
-  constructor({ goToPosition = () => {}, snapshot, pause, changed, presentVoiceOverlay = () => {}, returnToLibrary = () => {}, onLibraryFile = () => {}, readConfig, saveConfig, readModels = () => ({}), saveModels = () => {}, readBindings, saveBindings, readChats, saveChats, reveal, paperIdentity, audioControl, showSettings, captureQrImage, automaticConnection = false, readSpeech, saveSpeech, readVocabulary, saveVocabulary, readContextVocabulary, saveContextVocabulary, diagnostics }) {
-    Object.assign(this, { goToPosition, snapshot, pause, changed, presentVoiceOverlay, returnToLibrary, onLibraryFile, readConfig, saveConfig, readModels, saveModels, readBindings, saveBindings, paperIdentity, showSettings, captureQrImage, automaticConnection, diagnostics });
+  constructor({ pdfProcessing = () => false, goToPosition = () => {}, snapshot, pause, changed, presentVoiceOverlay = () => {}, returnToLibrary = () => {}, onLibraryFile = () => {}, readConfig, saveConfig, readModels = () => ({}), saveModels = () => {}, readBindings, saveBindings, readChats, saveChats, reveal, paperIdentity, audioControl, showSettings, captureQrImage, automaticConnection = false, readSpeech, saveSpeech, readVocabulary, saveVocabulary, readContextVocabulary, saveContextVocabulary, diagnostics }) {
+    Object.assign(this, { pdfProcessing, goToPosition, snapshot, pause, changed, presentVoiceOverlay, returnToLibrary, onLibraryFile, readConfig, saveConfig, readModels, saveModels, readBindings, saveBindings, paperIdentity, showSettings, captureQrImage, automaticConnection, diagnostics });
     this.glassesVisible = false; this.phoneVisible = false; this.replyUnread = false;
     this.chat = new AskChat(readChats, saveChats); this.reveal = reveal;
     this.deliveries = new Map();
@@ -116,6 +116,7 @@ export class AskUI {
     this.load(); this.render();
     this.pollTimer = setTimeout(() => this.pollFooter(), 3000);
   }
+  get unavailableReason() { return this.pdfProcessing() ? 'Ask is unavailable while the PDF is processing.' : ''; }
   options() { return { evenHost: !!window.flutter_inappwebview?.callHandler, origins, diagnostics: this.diagnostics, onLibraryFile: this.onLibraryFile }; }
   cancelPairing(clearInput = true) {
     this.qrJob?.abort(); this.qrJob = null; this.pairingBusy(false);
@@ -217,14 +218,14 @@ export class AskUI {
   }
   get librarian() { return this.session.context?.scope === 'library'; }
   openLibrarian() {
-    if (this.speech.setup.blocked) return false;
+    if (this.unavailableReason || this.speech.setup.blocked) return false;
     if (!this.librarian) this.close();
     const opened = this.open({ scope: 'library' });
     if (opened) this.reveal();
     return opened;
   }
   open({ showConversation = true, dictation = false, scope = 'document' } = {}) {
-    if (this.speech.setup.blocked) return false;
+    if (this.unavailableReason || this.speech.setup.blocked) return false;
     const revealUnread = showConversation && !this.glassesVisible;
     this.phoneVisible = true;
     if (showConversation) { this.glassesVisible = true; this.replyUnread = false; }
@@ -504,6 +505,7 @@ export class AskUI {
   }
   currentPaperKey() { if (this.session.active && (this.librarian || this.paperId === this.snapshot().paperId)) return this.paperKey; const id = this.snapshot().paperId; return id && connectionMode(this.readConfig()) === 'terminal' ? paperConnectionKey(this.configFor(id), id) : null; }
   footerStatus() {
+    if (this.unavailableReason) return 'PDF processing';
     const key = this.currentPaperKey(); const binding = this.readBindings()[key];
     if (this.session.active && (this.librarian || this.paperId === this.snapshot().paperId)) {
       if (this.session.status === 'thinking') return this.session.progressText === 'Reconnecting…' ? 'Reconnecting…' : this.session.answer ? 'Reply in progress' : 'Thinking…';
@@ -528,10 +530,14 @@ export class AskUI {
     return 'No new replies';
   }
   renderFooter() {
+    const reason = this.unavailableReason;
+    $('ask-open').disabled = !!reason || !this.snapshot().layout;
+    for (const id of ['ask-open', 'ask-footer']) $(id).title = reason;
+    $('ask-footer').disabled = !!reason;
     const status = this.footerStatus(); $('ask-footer').hidden = !status || !$('ask-panel').hidden;
     const text = `${this.librarian ? 'Librarian' : 'Ask'} · ${status}`; if ($('ask-footer').textContent !== text) $('ask-footer').textContent = text;
     $('ask-footer').dataset.ready = String(status === 'Unread reply');
-    $('ask-footer').dataset.busy = String(['Thinking…', 'Reply in progress', 'Sharing paper…', 'Reply pending', 'Reconnecting…'].includes(status));
+    $('ask-footer').dataset.busy = String(['PDF processing', 'Thinking…', 'Reply in progress', 'Sharing paper…', 'Reply pending', 'Reconnecting…'].includes(status));
     const state = $('ask-footer').dataset.busy === 'true' ? 'busy' : status === 'Unread reply' ? 'unread'
       : ['Ask failed', 'Connection error', 'Connection lost', 'Needs a response'].includes(status) ? 'attention' : 'idle';
     $('ask-state').dataset.state = state;
@@ -850,8 +856,8 @@ export class AskUI {
     this.session.syncConversation(this.chat.turns(this.paperKey));
     this.renderChat();
     $('ask-answer').setAttribute('aria-busy', String(s.status === 'thinking'));
-    $('ask-send').disabled = ['starting', 'listening', 'transcribing'].includes(s.status) || !!s.abort && !desktop || !!s.review && !s.review.text;
-    $('ask-voice').disabled = s.status === 'transcribing';
+    $('ask-send').disabled = !!this.unavailableReason || ['starting', 'listening', 'transcribing'].includes(s.status) || !!s.abort && !desktop || !!s.review && !s.review.text;
+    $('ask-voice').disabled = !!this.unavailableReason || s.status === 'transcribing';
     const listening = ['starting', 'listening'].includes(s.status);
     const voiceLabel = listening ? 'Review voice question' : this.options().evenHost ? 'Start dictation from glasses' : 'Start dictation';
     $('ask-voice').setAttribute('aria-label', voiceLabel); $('ask-voice').title = voiceLabel;

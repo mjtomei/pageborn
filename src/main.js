@@ -81,6 +81,7 @@ let persistTimer = null; let searchTimer = null;
 let animationTimer = null; let playbackBlocked = true;
 let pdfDocument = null; let selectionVersion = 0; let pdfBitmap = null; let pdfRendering = false;
 let pdfOpenMessage = null;
+const pdfPreparations = new Set();
 let pdfProgressRefresh = null;
 let pendingPdfPosition = null;
 let pdfNotes = null; let footnotesView = null; let askUI;
@@ -162,6 +163,7 @@ const glasses = new GlassesDisplay({ diagnostics, onStatus: text => {
   if (reader.playing && ['auto', 'speed'].includes(reader.mode)) scheduleAnimation();
 } });
 askUI = new AskUI({
+  pdfProcessing: () => pdfPreparations.size > 0,
   readVocabulary: () => preferences.speechVocabulary || '',
   saveVocabulary: value => { preferences.speechVocabulary = value; savePreferences(); },
   readContextVocabulary: () => preferences.speechContextVocabulary !== false,
@@ -402,7 +404,7 @@ function searchSnippet(text, query, radius = 40) {
 function renderLibrary() {
   $('library-sort').value = librarySort(preferences.librarySort);
   $('library-sort').disabled = !libraryReady;
-  $('library-librarian').disabled = !libraryReady;
+  $('library-librarian').disabled = !libraryReady || !!askUI?.unavailableReason;
   $('library-sync').disabled = libraryBusy || !libraryReady;
   renderSyncSummary();
   $('import').disabled = libraryBusy || !libraryReady;
@@ -526,6 +528,20 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('value-dialog').open && !$('debug-dialog')?.open && drawerQuery.matches && $('library-panel').dataset.open === 'true') { event.preventDefault(); setLibraryOpen(false); }
 });
 function buildLayout() { layout = nativeLayout(parseDocument(active.content), 0); }
+async function trackPdfPreparation(work) {
+  // Cancellation may overlap a new selection. Keep Ask blocked until every
+  // outstanding preparation has settled and released its working memory.
+  const preparation = {}; pdfPreparations.add(preparation);
+  try {
+    dirty = true; renderControls();
+    return await work();
+  }
+  finally {
+    pdfPreparations.delete(preparation);
+    dirty = true; renderControls();
+  }
+}
+
 function selectDocument(id, save = true) {
   previewInput?.cancel(); previewMenu = null;
   askUI?.close();
@@ -552,8 +568,9 @@ function selectDocument(id, save = true) {
       const saved = preferences.positions[documentKey()];
       if (active.format !== 'pdf') buildLayout();
       const doc = active, initial = layout;
-      void (async () => {
+      const open = async () => {
         if (doc.format === 'pdf') await askUI.speech.releaseForReading();
+        if (version !== selectionVersion) return;
         const next = await webReading.setDocument(doc, initial);
         if (version !== selectionVersion || !next) return;
         layout = next;
@@ -561,7 +578,8 @@ function selectDocument(id, save = true) {
         webReading.goTo(reader.y);
         notice(''); renderOutline(); renderBookmarks(); renderControls(); rememberPosition();
         void sharedReader.sync();
-      })().catch(error => { if (version === selectionVersion) notice(`Could not open document: ${error.message}`, true); });
+      };
+      void (doc.format === 'pdf' ? trackPdfPreparation(open) : open()).catch(error => { if (version === selectionVersion) notice(`Could not open document: ${error.message}`, true); });
     } else if (active.format === 'pdf') {
       reader.setDocument(0); notice('Opening PDF…');
       pdfOpenMessage = { body: 'Opening PDF…', status: 'Loading', kind: 'loading' };
@@ -619,13 +637,13 @@ function selectDocument(id, save = true) {
       const content = active.content;
       // Closing Ask cancelled recording above. Give PDF reflow the memory held
       // by idle speech workers; their saved checks/weights survive this release.
-      askUI.speech.releaseForReading().then(() => opening.open(content, mode, text => {
+      void trackPdfPreparation(() => askUI.speech.releaseForReading().then(() => opening.open(content, mode, text => {
         if (version !== selectionVersion) return;
         progressText = text; pdfProgressRefresh?.();
-      }, { keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, onPartial: acceptLayout })).then(acceptLayout).catch(error => {
+      }, { keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize, onPartial: acceptLayout })).then(acceptLayout).catch(async error => {
         if (error !== opening.openError) opening.report('pdf-open-error', error);
-        if (!layout || version !== selectionVersion) opening.destroy().catch(() => {});
-        else opening.ocr?.destroy().catch(() => {});
+        if (!layout || version !== selectionVersion) await opening.destroy().catch(() => {});
+        else await opening.ocr?.destroy().catch(() => {});
         if (version === selectionVersion) {
           pdfProgressRefresh = null;
           if (layout) {
@@ -638,7 +656,7 @@ function selectDocument(id, save = true) {
           pdfOpenMessage = { body: 'Could not open PDF.\nOpen the phone app for details.\nDouble tap to choose another file.', status: 'PDF error', kind: 'error' };
           dirty = true; renderControls(); animate(performance.now(), true);
         }
-      });
+      }));
     } else {
       buildLayout();
       reader.setDocument(layout.maxY, restorePosition(preferences.positions[documentKey()]), layout.pages,
@@ -816,7 +834,9 @@ function renderControls() {
     $('next').disabled = !footnotesView.layout || footnotesView.y >= footnotesView.layout.maxY;
     $('bookmark').disabled = true;
   }
-  $('ask-open').disabled = !layout;
+  $('ask-open').disabled = !layout || !!askUI?.unavailableReason;
+  $('library-librarian').disabled = !libraryReady || !!askUI?.unavailableReason;
+  $('library-librarian').title = askUI?.unavailableReason || '';
   askUI?.renderFooter();
   const askControls = Boolean(askUI?.glassesVisible || askUI?.session.dialog());
   const askOpen = !$('ask-panel').hidden;
@@ -1500,6 +1520,7 @@ function animate(now, immediate = false) {
       nativePdf: footnotesView.layout ? pdfNativeWindow(footnotesView.layout, footnotesView.y) : null,
       message: footnotesView.layout ? null : { body: 'No recognized footnotes in this document.\n\nTap to return to your place.', status: 'Footnotes · Tap to return' } });
     frame.askStatus = askUI?.footerStatus();
+    frame.askUnavailable = !!askUI?.unavailableReason;
     frame.dialog = askUI?.session.active ? askUI.session.dialog() : null;
     frame.askMenu = !!askUI?.glassesVisible;
     if (askUI?.glassesVisible) Object.assign(frame, { message: askUI.frame(), wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
@@ -1537,7 +1558,7 @@ function animate(now, immediate = false) {
     paintFrame(previewContext, frame); renderControls();
     if (!glasses.bridge && !window.flutter_inappwebview?.callHandler && !document.hidden) askUI?.acceptFrame(frame);
     if (!layout || rowAt(layout, reader.y) !== lastPassage) renderPassage();
-    const key = `${active?.id}:${Math.floor(frame.y)}:${frame.mode}:${frame.playing}:${layout?.size}:${reader.speed}:${frame.nativePdf?.reveal}:${frame.wordFrame?.start}:${frame.wordFrame?.end}:${frame.wordRate}:${frame.finished}:${frame.pauseAtTitles}:${frame.pageRemainingSeconds}:${positionPicker ? `position-${positionPicker.percent}-${positionPicker.step}` : picker?.index ?? 'reader'}:${librarySyncLabel}:${!!librarySync}:${frame.message?.body || ''}:${frame.message?.status || ''}:${frame.message?.statusCenter || ""}:${frame.message?.statusLeft || ""}:${frame.message?.statusRight || ""}:${JSON.stringify(frame.dialog || null)}:${frame.modePicker?.index ?? ''}:${!!footnotesView}:${frame.askStatus}`;
+    const key = `${active?.id}:${Math.floor(frame.y)}:${frame.mode}:${frame.playing}:${layout?.size}:${reader.speed}:${frame.nativePdf?.reveal}:${frame.wordFrame?.start}:${frame.wordFrame?.end}:${frame.wordRate}:${frame.finished}:${frame.pauseAtTitles}:${frame.pageRemainingSeconds}:${positionPicker ? `position-${positionPicker.percent}-${positionPicker.step}` : picker?.index ?? 'reader'}:${librarySyncLabel}:${!!librarySync}:${frame.message?.body || ''}:${frame.message?.status || ''}:${frame.message?.statusCenter || ""}:${frame.message?.statusLeft || ""}:${frame.message?.statusRight || ""}:${JSON.stringify(frame.dialog || null)}:${frame.modePicker?.index ?? ''}:${!!footnotesView}:${frame.askStatus}:${frame.askUnavailable}`;
     const timedWords = frame.mode === 'speed' && frame.playing && frame.wordFrame && !frame.dialog && !frame.modePicker;
     if (key !== lastSentKey && (immediate || timedWords || now - lastSend >= 120)) {
       glasses.submit(frame); lastSentKey = key; lastSend = now;

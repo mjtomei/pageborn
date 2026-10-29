@@ -87,9 +87,10 @@ function askNotification(frame) {
   const symbol = ASK_STATUS_SYMBOLS[frame.askStatus];
   // Preserve both commands beside the centered page and status symbol.
   // Compact double-tap wording before removing spaces around the colons.
-  const prefix = symbol ? `${symbol} ` : '';
-  const candidates = taps.map(tap => `${prefix}Hold: speak · ${tap}: Ask`);
-  candidates.push(`${prefix}Hold:speak · ${taps.at(-1)}: Ask`, `${prefix}Hold:speak · ${taps.at(-1)}:Ask`);
+  const prefix = !frame.askUnavailable && symbol ? `${symbol} ` : '';
+  const candidates = frame.askUnavailable ? ['Ask after loading', 'Ask unavailable']
+    : [...taps.map(tap => `${prefix}Hold: speak · ${tap}: Ask`),
+      `${prefix}Hold:speak · ${taps.at(-1)}: Ask`, `${prefix}Hold:speak · ${taps.at(-1)}:Ask`];
   const right = candidates.find(text => getTextWidth(text) <= rightWidth) || '';
   const leftWidth = center ? centerWidth : WIDTH - 2 * MARGIN - 8 - getTextWidth(right) - 20;
   let left = readingStateText(frame);
@@ -107,6 +108,7 @@ function footerColumns(frame) {
     return actionFooter(syncStatus || (syncing ? 'Syncing…' : items.length ? 'Swipe to choose' : 'Add files on your phone'), actions,
       !syncStatus && !syncing ? ['Swipe to choose', 'Add files on your phone'] : []);
   }
+  if (frame.askUnavailable && frame.message?.kind === 'loading') return actionFooter(frame.message.status || 'Loading PDF', 'Ask after loading');
   if (frame.message?.statusRight) {
     const right = titleText(frame.message.statusRight, 352);
     const center = frame.message.statusCenter || '';

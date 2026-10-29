@@ -44,8 +44,8 @@ const vite = built ? null : await createServer({ mode: 'web', plugins: [displayP
  if (id.endsWith('/src/web-pdf.js')) return code.replace('this.port = new PdfWorker();', `window.__pdfSteps = ['worker']; this.port = new PdfWorker(); this.port.addEventListener('message', e => window.__pdfSteps.push(e.data.action || 'message'));`)
  .replace('this.pdf = await Promise.race', `window.__pdfSteps.push('document'); this.pdf = await Promise.race`)
  .replace('const blocks = [];', `window.__pdfSteps.push('loaded'); const blocks = [];`)
- .replace('await this.text(1);', `window.__pdfSteps.push('text'); await this.text(1); window.__pdfSteps.push('done');`);
- }, configureServer(server) { server.middlewares.use('/web/config', (req,res) => { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({ mode: 'terminal', endpoint: `http://${req.headers.host}`, token: 'fixture', agent: 'claude' })); }); } }], cacheDir: '.state/vite-web-test', server: { host:'127.0.0.1', port:0, hmr:false, proxy: { '/api': `http://127.0.0.1:${backend.address().port}` } }, clearScreen: false });
+ .replace('await this.text(1);', `window.__pdfSteps.push('text'); await this.text(1); if (window.__holdPdfOpen) await new Promise(resolve => { window.__releasePdfOpen = resolve; }); window.__pdfSteps.push('done');`);
+ }, configureServer(server) { server.middlewares.use('/web/config', (req,res) => { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({ mode: 'terminal', endpoint: `http://${req.headers.host}`, token: 'fixture', agent: 'claude' })); }); } }], cacheDir: '.state/vite-web-test', server: { host:'127.0.0.1', port:0, hmr:false, watch:null, proxy: { '/api': `http://127.0.0.1:${backend.address().port}` } }, clearScreen: false });
 await vite?.listen();
 let production;
 if (built) { production = createWebApp({ distDir: path.resolve(process.env.WEB_DIST || 'dist-web'), upstream: `http://127.0.0.1:${backend.address().port}`, upstreamToken: 'fixture', allowLocal: true }).listen(0, '127.0.0.1'); await new Promise(r => production.once('listening', r)); }
@@ -114,8 +114,21 @@ try {
     assert(!await page.locator('#ask-messages').innerText().then(t => t.includes('Pageborne question')));
     await page.locator('#web-chat-close').click();
     await page.locator('#library-toggle').click();
+    if (!built) await page.evaluate(() => { window.__holdPdfOpen = true; });
     await page.locator('[data-document-id="original.pdf"] .document-card').click();
+    if (!built) {
+      await expect.poll(() => page.evaluate(() => typeof window.__releasePdfOpen)).toBe('function');
+      for (const id of ['web-chat', 'web-speak', 'web-nearby']) await expect(page.locator(`#${id}`)).toBeDisabled();
+      await expect(page.locator('#web-chat')).toContainText('Ask after loading');
+      await expect(page.locator('#web-speak')).toContainText('PDF processing');
+      assert.equal(await page.evaluate(() => window.__askUI.open()), false);
+      await page.evaluate(() => { window.__holdPdfOpen = false; window.__releasePdfOpen(); });
+    }
     await expect(page.locator('.web-pdf-page')).toHaveCount(2,{timeout:30000});
+    await expect(page.locator('#web-chat')).toBeEnabled();
+    await expect(page.locator('#web-speak')).toBeEnabled();
+    await expect(page.locator('#web-chat')).toHaveText('Chat');
+    await expect(page.locator('#web-speak')).toHaveText('Hold to talk');
     await expect.poll(()=>page.locator('.web-pdf-page canvas').first().evaluate(c=>c.width)).toBeGreaterThan(100);
     await expect(page.locator('#web-nearby')).toBeVisible({timeout:15000});
     await page.locator('#web-nearby').click();

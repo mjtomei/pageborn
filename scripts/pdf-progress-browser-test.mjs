@@ -70,6 +70,37 @@ const partial = async count => {
   assert.notEqual((await diag()).pdf.stage, 'ready');
   await expect.poll(() => page.evaluate(() => window.__displayFrame?.layout?.format)).toBe('pdf');
 };
+const askBlocked = async () => {
+  await expect(page.locator('#ask-open')).toBeDisabled();
+  await expect(page.locator('#ask-footer')).toBeDisabled();
+  await expect(page.locator('#library-librarian')).toBeDisabled();
+  await expect(page.locator('#ask-footer')).toContainText('PDF processing');
+  await expect.poll(() => page.evaluate(() => window.__displayFrame?.askUnavailable)).toBe(true);
+  const attempts = await page.evaluate(async () => {
+    const ask = window.__askUI, calls = [], originals = [];
+    // Fail the test on any model, capture or submission start, including calls
+    // from gestures that bypass disabled HTML buttons.
+    for (const [owner, method] of [[ask.stream, 'start'], [ask.speech, 'open'], [ask.mic, 'start'], [ask.phoneMic, 'start'], [ask.session, 'send']]) {
+      originals.push([owner, method, owner[method]]);
+      owner[method] = () => { calls.push(method); };
+    }
+    try {
+      const opened = ask.open(), librarian = ask.openLibrarian();
+      await ask.hold('glasses'); await ask.hold('phone'); await ask.submit('Do not send during PDF processing.');
+      ask.handle('ask'); ask.handle('ask-toggle'); ask.handle('ask-hold');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return { opened, librarian, active: ask.session.active, calls };
+    } finally { for (const [owner, method, original] of originals) owner[method] = original; }
+  });
+  assert.deepEqual(attempts, { opened: false, librarian: false, active: false, calls: [] });
+};
+const askAvailable = async () => {
+  await expect(page.locator('#ask-open')).toBeEnabled();
+  await expect(page.locator('#library-librarian')).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => window.__askUI.unavailableReason)).toBe('');
+  await expect.poll(() => page.evaluate(() => window.__displayFrame?.askUnavailable)).toBe(false);
+  assert.equal(await page.evaluate(() => { const ask = window.__askUI; const opened = ask.open(); ask.close(); return opened; }), true);
+};
 const jump = async value => page.locator('#position').evaluate((el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, value);
 try {
   page = await context.newPage(); page.on('pageerror', error => result.errors.push(error.message));
@@ -79,8 +110,12 @@ try {
     { name: 'progressive.pdf', mimeType: 'application/pdf', buffer: pdfFixture('repeated-text') },
     { name: 'other.md', mimeType: 'text/markdown', buffer: Buffer.from('# Another document\n\nStay in this document while the old PDF closes.') },
   ]);
+  await page.evaluate(() => { window.__holdFrom = 0; });
   await showLibrary(page); await page.locator('[data-document-id="progressive.pdf"] .document-card').click();
-  await partial(1); assert.equal((await diag()).counts['pdf-cache-saved'] || 0, 0);
+  await expect.poll(() => page.evaluate(() => window.__held)).toBeGreaterThan(0);
+  await askBlocked(); result.askBlockedBeforeFirstPage = true;
+  await page.evaluate(() => window.__release(1));
+  await partial(1); await askBlocked(); result.askBlockedDuringPartialReading = true; assert.equal((await diag()).counts['pdf-cache-saved'] || 0, 0);
   await expect(page.locator('#pdf-passage canvas').first()).toBeVisible();
   await jump('350'); await page.waitForTimeout(500); const before = await anchor(); assert.ok(before.pdf.offset > 0);
   // Browse without moving the glasses; growing layouts must not force follow.
@@ -98,13 +133,15 @@ try {
   await expect.poll(async () => (await anchor()).speedCursor.key).toBe(word.key);
   await expect.poll(async () => (await anchor()).speedCursor.text).toBe(word.text);
   result.partialSpeedWordPreserved = true;
+  await askBlocked();
   await page.screenshot({ path: path.join(dir, 'reading-during-preparation.png'), fullPage: true });
   await page.evaluate(() => window.__release()); await waitForPdfReady(page);
   await expect.poll(async () => (await anchor()).speedCursor.key).toBe(word.key);
   assert.equal((await diag()).counts['pdf-cache-saved'], 1);
+  await askAvailable(); result.askRestoredAfterCompletion = true;
   await page.reload(); await waitForPdfReady(page);
   assert.equal((await diag()).pdf.cached, true); assert.equal((await diag()).counts['pdf-partial-ready'] || 0, 0);
-  result.completedCacheReused = true;
+  result.completedCacheReused = true; await askAvailable();
   // A saved later-page location must not be replaced by an early-prefix clamp.
   await jump('900'); await page.waitForTimeout(500); const late = await anchor(); assert.ok(late.pdf.page > 1);
   await chooseMode(page,'page');
@@ -119,7 +156,7 @@ try {
   result.laterSavedPositionPreserved = true;
   // Choosing to read the prefix cancels the automatic return to the later save.
   await page.evaluate(() => { window.__holdFrom = 1; window.__held = 0; });
-  await page.locator('#pdf-text-size').selectOption('28'); await partial(1);
+  await page.locator('#pdf-text-size').selectOption('28'); await partial(1); await askBlocked();
   assert.equal((await anchor()).pdf.page, late.pdf.page);
   await jump('250'); await page.waitForTimeout(500);
   const chosenEarly = await anchor(); assert.equal(chosenEarly.pdf.page, 1);
@@ -135,6 +172,7 @@ try {
   await expect(page.locator('#passage')).toContainText('Stay in this document');
   await page.waitForTimeout(500); assert.equal((await diag()).counts['pdf-cache-saved'], 2, 'cancelled preparation adds no cache entry');
   result.cancelledPreparationCannotReplaceDocument = true;
+  await askAvailable(); result.askRestoredAfterCancellation = true;
 
   await page.evaluate(() => { window.__gate = 'page'; window.__holdFrom = 1; window.__held = 0; });
   await page.locator('#file-picker').setInputFiles({ name: 'failed.pdf', mimeType: 'application/pdf', buffer: pdfFixture('repeated-text') });
@@ -144,6 +182,7 @@ try {
   await expect(page.locator('#bookmark')).toBeEnabled(); await jump('500');
   await expect(page.locator('#pdf-passage canvas').first()).toBeVisible();
   assert.equal((await diag()).counts['pdf-cache-saved'], 2, 'a failed prefix is never cached as complete');
+  await askAvailable(); result.askRestoredAfterPartialFailure = true;
   await showLibrary(page); await page.locator('[data-document-id="other.md"] .document-card').click();
   await page.locator('[data-document-id="failed.pdf"] .document-card').click(); await waitForPdfReady(page);
   assert.equal((await diag()).counts['pdf-cache-saved'], 3, 'reopening can finish and cache the previously failed PDF');

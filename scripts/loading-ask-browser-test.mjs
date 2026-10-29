@@ -28,7 +28,9 @@ if (process.env.LIVE_TERMINAL_STATE) {
   endpoint = `http://127.0.0.1:${fixture.address().port}`; token = 'fixture';
 }
 process.env.PAGEBORNE_ASK_ORIGINS = endpoint;
-const vite = await createServer({ server: { host: '127.0.0.1', port: 0 }, clearScreen: false }); await vite.listen();
+const vite = await createServer({ mode: 'release', plugins: [{ name: 'loading-speech-fixture', transform(code, id) {
+  if (id.endsWith('/src/speech-setup.js')) return code.replace('start(initialize) {', 'start(initialize) { this.blocked = false; return Promise.resolve();');
+} }], server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false }); await vite.listen();
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: process.env.SHOW_BROWSER !== '1',
   env: { ...process.env, ...(process.env.SHOW_BROWSER === '1' ? { DISPLAY: ':0', XAUTHORITY: '/run/user/1000/gdm/Xauthority' } : {}) }, args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 1100, height: 900 }, recordVideo: { dir: path.join(dir, 'recording'), size: { width: 1100, height: 900 } } });
@@ -92,10 +94,12 @@ try {
   await expect(page.locator('#pdf-passage canvas').first()).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__held)).toBeGreaterThan(0);
   const partial = await flush();
-  await ask('Briefly describe the visible passage in one sentence. Do not use tools or change files.', /\S/);
-  result.partialPdfAsk = true; console.log('Chrome: Ask works while later PDF pages are stalled.');
-  await page.screenshot({ path: path.join(dir, 'partial-pdf-answer.png'), fullPage: true });
-  await backToReading(page); assert.deepEqual(await flush(), partial);
+  await expect(page.locator('#ask-open')).toBeDisabled();
+  await expect(page.locator('#ask-footer')).toBeDisabled();
+  await expect(page.locator('#ask-footer')).toContainText('PDF processing');
+  result.partialPdfAskBlocked = true; console.log('Chrome: Ask is disabled while later PDF pages are stalled.');
+  await page.screenshot({ path: path.join(dir, 'partial-pdf-ask-disabled.png'), fullPage: true });
+  assert.deepEqual(await flush(), partial);
   await showLibrary(page);
   const start = performance.now();
   await page.locator('[data-document-id="ask-test.md"] .document-card').click();
@@ -130,7 +134,7 @@ try {
     await open('ask-test.md'); await expect.poll(() => page.evaluate(() => window.__workers.active)).toBe(0); await page.evaluate(() => window.__release());
   }
   assert.deepEqual(result.errors, []); result.passed = true;
-  console.log(JSON.stringify({ passed: true, liveTerminal: result.liveTerminal, cancellations: result.cancellations.length, partialPdfAsk: true, realScanPartial: result.realScanPartial, longTasks: result.longTasks }));
+  console.log(JSON.stringify({ passed: true, liveTerminal: result.liveTerminal, cancellations: result.cancellations.length, partialPdfAskBlocked: true, realScanPartial: result.realScanPartial, longTasks: result.longTasks }));
 } catch (error) {
   result.error = error.stack;
   result.askStatus = await page.locator('#ask-status').innerText().catch(() => 'unavailable');

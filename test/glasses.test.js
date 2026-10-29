@@ -569,6 +569,26 @@ test('Ask status symbols exist in the native font and retain full mode guidance 
   }
 });
 
+test('PDF processing replaces Ask gestures with a fitting dim unavailable hint', () => {
+  const layout = { format: 'pdf', rows: [], blocks: [{ y: 0, drawHeight: 1000, page: 9999 }], maxY: 900 };
+  const frames = ['page', 'auto', 'speed'].flatMap(mode => [false, true].map(playing => ({
+    layout, mode, playing, y: 0, wordRate: 6000, speed: 200, remainingSeconds: 7200,
+    askStatus: 'PDF processing', askUnavailable: true,
+  })));
+  frames.push({ askUnavailable: true, message: { body: 'Opening PDF…', status: 'Loading PDF', kind: 'loading' } });
+  for (const frame of frames) {
+    const footer = statusText(frame), [status, commands] = footerTextObjects(frame);
+    assert.match(footer, /Ask after loading$/);
+    assert.doesNotMatch(footer, /Hold|Tap|2×/);
+    assert.equal(status.textColor, 4); assert.equal(commands.textColor, 1);
+    assert.equal(commands.content.trim(), 'Ask after loading');
+    assert.doesNotMatch(status.content, /Ask after loading/);
+    assert.match(status.content, frame.layout ? /pg\. 9999/ : /Loading PDF/);
+    for (const box of [status, commands]) assert(getTextWidth(box.content) <= box.width);
+    assert(getTextWidth(footer) <= 552, footer);
+  }
+});
+
 test('only commands dim while footer status, icons, time and page numbers stay bright', () => {
   const layout = nativeLayout(parseDocument('A reading passage. '.repeat(100)));
   for (const mode of ['page', 'auto', 'speed']) for (const askStatus of ['', ...Object.keys(ASK_STATUS_SYMBOLS)]) {

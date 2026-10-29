@@ -83,7 +83,7 @@ export class WebReading {
     this.mic.addEventListener('lostpointercapture', release);
     this.mic.addEventListener('pointercancel', () => { if (this.holding) { this.holding = false; ask.cancelDictation(); this.update(); } });
     this.mic.addEventListener('keydown', event => {
-      if ([' ', 'Enter'].includes(event.key) && !event.repeat && !this.holding) { event.preventDefault(); this.holding = true; void ask.hold('phone'); this.update(); }
+      if ([' ', 'Enter'].includes(event.key) && !event.repeat && !this.holding && !this.mic.disabled) { event.preventDefault(); this.holding = true; void ask.hold('phone'); this.update(); }
     });
     this.mic.addEventListener('keyup', event => { if ([' ', 'Enter'].includes(event.key)) { event.preventDefault(); release(); } });
     window.addEventListener('blur', release);
@@ -126,7 +126,12 @@ export class WebReading {
       const { WebPdf } = await import('./web-pdf.js');
       if (generation !== this.generation) return null;
       const pdf = this.pdf = new WebPdf();
-      this.layout = await pdf.open(doc.content);
+      try { this.layout = await pdf.open(doc.content); }
+      catch (error) {
+        await pdf.destroy();
+        if (this.pdf === pdf) this.pdf = null;
+        throw error;
+      }
       if (generation !== this.generation) { await pdf.destroy(); return null; }
       this.scroller.replaceChildren();
       for (const block of this.layout.blocks) {
@@ -229,10 +234,12 @@ export class WebReading {
     this.nearest = this.layout ? closestQuestion(turns, { page: this.page, position: 100 * (this.y || 0) / (this.layout.maxY || 1) }) : null;
     this.near.hidden = !this.nearest;
     if (this.nearest) this.near.lastChild.textContent = this.nearest.page ? `Question · p. ${this.nearest.page}` : 'Nearby question';
-    this.chat.disabled = this.mic.disabled = !this.layout;
+    this.near.disabled = this.chat.disabled = this.mic.disabled = !this.layout || !!ask.unavailableReason;
+    for (const control of [this.near, this.chat, this.mic]) control.title = ask.unavailableReason || '';
+    this.chat.lastChild.textContent = ask.unavailableReason ? 'Ask after loading' : 'Chat';
     this.mic.disabled ||= ask.session.status === 'transcribing';
     this.mic.classList.toggle('recording', !!this.holding);
-    this.mic.lastChild.textContent = this.holding ? 'Release to review' : 'Hold to talk';
+    this.mic.lastChild.textContent = this.holding ? 'Release to review' : ask.unavailableReason ? 'PDF processing' : 'Hold to talk';
     this.chat.classList.toggle('unread', !!ask.replyUnread);
     this.root.querySelector('#web-page-label').textContent = this.layout ? this.pdf ? `Page ${this.page || 1} of ${this.layout.blocks.length}` : `${Math.round(100 * (this.y || 0) / (this.layout.maxY || 1))}%` : '';
   }
