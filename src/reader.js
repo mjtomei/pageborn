@@ -1,4 +1,4 @@
-import { BODY_HEIGHT } from './document.js';
+import { BODY_HEIGHT, rowAt } from './document.js';
 import { LINE_HEIGHT } from './native-text.js';
 import { SpeedReading, wordsPerMinute, wordsPerGroup, stepWordSpeed } from './speed-reading.js';
 
@@ -23,21 +23,27 @@ export class Reader {
     this.speedReading = new SpeedReading();
     this.resetPageSession();
   }
-  resetPageSession() { this.pagesRead = 0; this.pageReadSeconds = 0; this.pageDwellSeconds = 0; }
+  resetPageSession() { this.pagesRead = 0; this.pageReadWords = 0; this.pageReadSeconds = 0; this.pageDwellSeconds = 0; }
+  pageWordsFrom(y) {
+    const layout = this.pageLayout, entries = this.speedReading.entries;
+    // Match the first visible row after an arbitrary position jump. A word
+    // wrapped or split for display still contributes only its original weight.
+    let start = y;
+    if (layout?.format === 'pdf') {
+      const run = layout.nativeRuns?.find(run => y >= run.start && y < run.end);
+      start = run?.rows[Math.max(0, run.rows.findLastIndex(row => row.y <= y))]?.y ?? y;
+    } else if (layout?.rows?.length) start = layout.rows[rowAt(layout, y)].y;
+    let low = 0, high = entries.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (entries[mid].y < start - .5) low = mid + 1; else high = mid;
+    }
+    return this.pageRemainingWords?.[low] || 0;
+  }
   get pageRemainingSeconds() {
-    if (this.mode !== 'page' || this.pagesRead < 5) return undefined;
-    // The current screen is still to be read. Use the layout's glasses pages,
-    // including image screens, rather than original PDF page numbers.
-    let remaining;
-    if (this.pages?.length) {
-      let low = 0, high = this.pages.length;
-      while (low < high) {
-        const mid = (low + high) >>> 1;
-        if (this.pages[mid] <= this.y + .5) low = mid + 1; else high = mid;
-      }
-      remaining = this.pages.length - Math.max(0, low - 1);
-    } else remaining = Math.ceil((this.maxY - this.y) / (BODY_HEIGHT - 29)) + 1;
-    return remaining * this.pageReadSeconds / this.pagesRead;
+    if (this.mode !== 'page' || this.pagesRead < 5 || !this.pageReadWords) return undefined;
+    // Include the current pane's text, but no invented duration for figures.
+    return this.pageWordsFrom(this.y) * this.pageReadSeconds / this.pageReadWords;
   }
   clamp(y) { return Math.min(this.maxY, Math.max(0, Number.isFinite(y) ? y : 0)); }
   setDocument(maxY, position = 0, pages = null, pagePosition = null, autoPosition = null, { preserveSession = false } = {}) {
@@ -48,6 +54,7 @@ export class Reader {
     this.autoPosition = autoPosition;
     this.autoPosition?.reset?.();
     this.speedReading.load(null);
+    this.pageLayout = null; this.pageRemainingWords = null;
     this.positionY = this.y = this.target = this.clamp(position); this.onChange();
   }
   setMode(mode) {
@@ -65,6 +72,13 @@ export class Reader {
   }
   setSpeedDocument(layout, saved) {
     const restored = this.speedReading.load(layout, this.positionY, saved);
+    this.pageLayout = layout;
+    const entries = this.speedReading.entries;
+    this.pageRemainingWords = new Float64Array(entries.length + 1);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      // Manual pace counts actual words, without speed mode's title multiplier.
+      this.pageRemainingWords[i] = this.pageRemainingWords[i + 1] + (entries[i].words || 0);
+    }
     if (this.mode === 'speed') this.syncWords();
     // Full-page modes clamp the viewport near the end of a document. Keep
     // the exact source row/word even when it sits below that viewport's top.
@@ -94,7 +108,12 @@ export class Reader {
       : direction > 0 ? this.pages?.find(y => y > this.y + .5) : this.pages?.findLast(y => y < this.y - .5);
     const position = this.clamp(next ?? this.y + direction * (BODY_HEIGHT - 29));
     if (this.mode === 'page' && position > this.y && this.pageDwellSeconds > 0) {
-      this.pagesRead++; this.pageReadSeconds += this.pageDwellSeconds;
+      const words = this.pageWordsFrom(this.y) - this.pageWordsFrom(position);
+      // Image-only panes contribute neither time nor a warm-up sample. Count
+      // text progress once even when successive panes have overlapping rows.
+      if (words > 0) {
+        this.pagesRead++; this.pageReadWords += words; this.pageReadSeconds += this.pageDwellSeconds;
+      }
     }
     this.jump(position);
   }

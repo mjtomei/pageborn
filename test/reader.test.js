@@ -2,28 +2,37 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseDocument, layoutDocument, anchorAt, restoreAnchor, searchDocument, positionForMatch, wrapText, BODY_HEIGHT } from '../src/document.js';
 import { Reader, actionForEvent, LatestFrameQueue, speedFromSlider, speedToSlider, stepAutoSpeed } from '../src/reader.js';
+import { nativeLayout, pageTurnY } from '../src/native-text.js';
 
 const layout = text => layoutDocument(parseDocument(text), value => Array.from(value).length * 11);
 
-test('Pages estimates remaining screen time after five completed pages in the current opening', () => {
+function paceLayout(counts) {
+  const blocks = counts.map((words, index) => ({ index, kind: 'paragraph', text: Array(words).fill('word').join(' ') }));
+  return { blocks, rows: blocks.map(block => ({ block: block.index, text: block.text, offset: 0, y: block.index * 100 })) };
+}
+
+test('Pages learns words per second from differently sized text panes after five samples', () => {
   const reader = new Reader(), pages = Array.from({ length: 11 }, (_, i) => i * 100);
   const read = seconds => { for (let i = 0; i < seconds; i++) reader.tick(1); reader.pageStep(1); };
   reader.setDocument(1000, 0, pages);
+  reader.setSpeedDocument(paceLayout(pages.map((_, i) => (i + 1) * 10)));
   for (let i = 0; i < 4; i++) { read(20); assert.equal(reader.pageRemainingSeconds, undefined); }
   read(20);
-  assert.equal(reader.pagesRead, 5); assert.equal(reader.pageRemainingSeconds, 120, 'six screens remain, including the current screen');
-  reader.tick(1); assert.equal(reader.pageRemainingSeconds, 120, 'estimate updates per page without display countdown traffic');
-  read(9); assert.equal(reader.pageRemainingSeconds, 5 * 110 / 6, 'all completed pages contribute to the mean');
-  reader.jump(1000); assert.equal(reader.pageRemainingSeconds, 110 / 6, 'the last visible screen still needs reading');
+  assert.equal(reader.pagesRead, 5); assert.equal(reader.pageReadWords, 150);
+  assert.equal(reader.pageRemainingSeconds, 510 * 100 / 150, '510 words remain, including the current pane');
+  reader.tick(1); assert.equal(reader.pageRemainingSeconds, 340, 'estimate updates per turn without countdown traffic');
+  read(9); assert.equal(reader.pageRemainingSeconds, 450 * 110 / 210, 'pace is total words over total time, not a mean of pane rates');
+  reader.jump(1000); assert.equal(reader.pageRemainingSeconds, 110 * 110 / 210, 'the last visible text still needs reading');
   reader.tick(1); reader.pageStep(1); assert.equal(reader.pagesRead, 6, 'repeated next at the end does not count');
   reader.setDocument(1000, 1000, pages);
   assert.equal(reader.pageRemainingSeconds, undefined, 'reopening the same document starts a fresh session');
-  assert.equal(reader.pagesRead, 0); assert.equal(reader.pageReadSeconds, 0);
+  assert.equal(reader.pagesRead, 0); assert.equal(reader.pageReadSeconds, 0); assert.equal(reader.pageReadWords, 0);
 });
 
 test('Pages timing excludes jumps, backward navigation, blocked views and other reading modes', () => {
   const reader = new Reader(), pages = Array.from({ length: 20 }, (_, i) => i * 100);
   reader.setDocument(1900, 300, pages);
+  reader.setSpeedDocument(paceLayout(pages.map(() => 10)));
   for (let i = 0; i < 5; i++) {
     reader.tick(1); reader.tick(1, true); reader.tick(30, true); reader.tick(NaN); reader.tick(-1);
     reader.tick(1); reader.pageStep(1);
@@ -40,10 +49,27 @@ test('Pages timing excludes jumps, backward navigation, blocked views and other 
 });
 
 test('a delayed phone timer still counts time reading an accepted manual page', () => {
-  const reader = new Reader(); reader.setDocument(2000);
+  const reader = new Reader(), pages = Array.from({ length: 21 }, (_, i) => i * 100);
+  reader.setDocument(2000, 0, pages); reader.setSpeedDocument(paceLayout(pages.map(() => 10)));
   for (let i = 0; i < 5; i++) { reader.tick(20); reader.pageStep(1); }
   assert.equal(reader.pagesRead, 5); assert.equal(reader.pageReadSeconds, 100);
   reader.tick(300, true); assert.equal(reader.pageDwellSeconds, 0, 'a hidden/suspended/blocked page is not timed');
+});
+
+test('word pace counts titles normally and does not double-count overlapping text rows', () => {
+  const document = nativeLayout(parseDocument('# Three word title\n\n' + Array(500).fill('reading').join(' ')), 2);
+  const reader = new Reader();
+  reader.setDocument(document.maxY, 0, document.pages, (y, direction) => pageTurnY(document, y, direction));
+  reader.setSpeedDocument(document);
+  assert.equal(reader.pageWordsFrom(0), 503, 'titles have no automatic playback multiplier');
+  while (reader.y < reader.maxY) {
+    reader.tick(10); reader.pageStep(1);
+    assert.equal(reader.pageReadWords + reader.pageWordsFrom(reader.y), 503);
+  }
+  assert(reader.pageRemainingSeconds > 0, 'final visible text is still included');
+  const remaining = reader.pageWordsFrom(reader.y);
+  reader.jump(reader.y - 1);
+  assert(reader.pageWordsFrom(reader.y) >= remaining, 'partial-row jumps include the first visible row');
 });
 
 test('Markdown headings, lists, code, tables, Unicode and links remain readable without executing HTML', () => {

@@ -22,10 +22,11 @@ test('preparing more PDF pages preserves the session average and dwell while ext
   updatePdfReader(reader, null, first, null, 3);
   for (let i = 0; i < 5; i++) { reader.tick(1); reader.pageStep(1); }
   assert.equal(reader.pagesRead, 5);
-  const estimate = reader.pageRemainingSeconds, anchor = pdfAnchor(first, reader.y);
+  const estimate = reader.pageRemainingSeconds, words = reader.pageReadWords, anchor = pdfAnchor(first, reader.y);
   reader.tick(.75);
   updatePdfReader(reader, first, next, null, 3);
   assert.equal(reader.pagesRead, 5); assert.equal(reader.pageReadSeconds, 5); assert.equal(reader.pageDwellSeconds, .75);
+  assert.equal(reader.pageReadWords, words, 'new pages preserve the learned word rate');
   assert.deepEqual(pdfAnchor(next, reader.y).pdf, anchor.pdf);
   assert(reader.pageRemainingSeconds > estimate);
   updatePdfReader(reader, null, next, anchor, 3);

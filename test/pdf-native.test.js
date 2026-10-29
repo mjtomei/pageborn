@@ -5,11 +5,53 @@ import { pdfNativeWindow, pdfAutoStep, pdfImageEnd, PdfAutoscroll, pdfEntryLines
 import { byteLength, TEXT_BYTES, VISIBLE_LINES } from '../src/native-text.js';
 import { Reader } from '../src/reader.js';
 
-const prose = (name, count) => ({ x: 0, y: 0, width: 500, height: 100, kind: 'text', text: name, lines: [],
-  reflow: { text: name, fontSize: 20, lineHeight: 25, height: count * 25,
-    rows: Array.from({ length: count }, (_, i) => ({ text: `${name} row ${i}`, y: i * 25, items: [] })) } });
+const prose = (name, count) => {
+  let text = ''; const rows = [];
+  for (let i = 0; i < count; i++) {
+    if (text) text += ' ';
+    const start = text.length, row = `${name} row ${i}`; text += row;
+    rows.push({ text: row, y: i * 25, items: [], start, end: text.length });
+  }
+  return { x: 0, y: 0, width: 500, height: 100, kind: 'text', text, lines: [],
+    reflow: { text, fontSize: 20, lineHeight: 25, height: count * 25, rows } };
+};
 const figure = { x: 0, y: 0, width: 576, height: 200, kind: 'figure', text: '', lines: [] };
 const make = blocks => createPdfLayout([{ number: 1, blocks }]);
+
+test('manual reading pace ignores quick or slow full-page images before and between text panes', () => {
+  const cover = { ...figure, fullPage: true, height: 800 };
+  const layout = make([...Array(6).fill(cover), prose('Before', 18), cover, prose('After', 54)]);
+  const read = imageSeconds => {
+    const reader = new Reader();
+    reader.setDocument(layout.maxY, 0, layout.pages, (y, direction) => pdfPageTurn(layout, y, direction));
+    reader.setSpeedDocument(layout);
+    let imagePanes = 0, textPanes = 0;
+    while (textPanes < 5) {
+      const text = pdfNativeWindow(layout, reader.y);
+      reader.tick(text ? 9 : imageSeconds); reader.pageStep(1);
+      if (text) textPanes++; else imagePanes++;
+      assert.equal(reader.pagesRead, textPanes, 'only text advances count toward warm-up');
+      if (textPanes < 5) assert.equal(reader.pageRemainingSeconds, undefined);
+    }
+    assert.equal(imagePanes, 7); assert.equal(reader.pageReadWords, 135); assert.equal(reader.pageReadSeconds, 45);
+    assert.equal(reader.pageRemainingSeconds, 27, '81 remaining words at the measured three words per second');
+    const before = reader.pageWordsFrom(reader.y);
+    reader.jump(reader.y + 7);
+    assert.equal(reader.pageWordsFrom(reader.y), before, 'a jump inside a row retains its visible words');
+    return reader.pageRemainingSeconds;
+  };
+  assert.equal(read(.05), read(120), 'time spent on images cannot change the measured text pace');
+});
+
+test('image-only PDFs never learn a fictitious word rate from page turns', () => {
+  const layout = make(Array(8).fill({ ...figure, fullPage: true, height: 800 }));
+  const reader = new Reader();
+  reader.setDocument(layout.maxY, 0, layout.pages, (y, direction) => pdfPageTurn(layout, y, direction));
+  reader.setSpeedDocument(layout);
+  for (let i = 0; i < 7; i++) { reader.tick(2); reader.pageStep(1); }
+  assert.equal(reader.pagesRead, 0); assert.equal(reader.pageReadWords, 0);
+  assert.equal(reader.pageReadSeconds, 0); assert.equal(reader.pageRemainingSeconds, undefined);
+});
 
 test('a scanned divider does not create an almost-empty image page before native text', () => {
   const divider = { x: 53, y: 78, width: 794, height: 3, text: '', lines: [], kind: 'scan' };
