@@ -16,6 +16,8 @@ jobs:
       - run: npm ci
       - run: npm run release:audit
       - run: npm test
+      - run: npm run test:ocr
+      - run: npm run build:ocr
       - run: npm run pack:release
       - run: npm run build:web
       - run: npm run build:debug
@@ -25,6 +27,7 @@ jobs:
         run: |
           export CHROME_PATH="$(node --input-type=module -e 'import { chromium } from "@playwright/test"; process.stdout.write(chromium.executablePath())')"
           npm run test:build-profiles
+          node scripts/desktop-ocr-browser-test.mjs
           PAGE_TIME_BROWSER=chromium npm run test:page-time
           npm run test:pdf-centering
           npm run test:pdf-decoders

@@ -40,6 +40,7 @@ import automaticTerminal from 'virtual:automatic-terminal';
 import { automaticTerminalConfig, migrateTerminalPreferences } from './terminal-pairing.js';
 import { WebReading } from './web-reading.js';
 import { SharedReaderState, scopedReaderConfig } from './shared-reader-state.js';
+import { desktopPdfCache } from './desktop-pdf-cache.js';
 
 const $ = id => document.getElementById(id);
 let webReading, sharedReader, PdfDocument;
@@ -583,7 +584,14 @@ function selectDocument(id, save = true) {
     } else if (active.format === 'pdf') {
       reader.setDocument(0); notice('Opening PDF…');
       pdfOpenMessage = { body: 'Opening PDF…', status: 'Loading', kind: 'loading' };
-      pdfDocument = new PdfDocument({ diagnostics, selection: version, preparationCache: pdfPreparationCache.forDocument(active.id) }); const opening = pdfDocument;
+      const ocrConfig = askUI.readConfig();
+      let ocrClient = null;
+      try {
+        if (connectionMode(ocrConfig) === 'terminal' && ocrConfig.endpoint)
+          ocrClient = new EvenTerminal(ocrConfig, { ...askUI.options(), diagnostics: undefined });
+      } catch { /* An incomplete optional connection must not prevent reading. */ }
+      pdfDocument = new PdfDocument({ diagnostics, selection: version,
+        preparationCache: desktopPdfCache(pdfPreparationCache.forDocument(active.id), ocrClient, active.id, () => version === selectionVersion) }); const opening = pdfDocument;
       const { mode, keepMarginNotes, keepRepeatedText, normalizeColors, reflow, textSize } = pdfSettingsFor(preferences, documentKey());
       $('pdf-layout').value = mode;
       $('pdf-margin-notes').checked = keepMarginNotes;

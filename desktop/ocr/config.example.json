@@ -1,0 +1,8 @@
+{
+  "libraryDir": "/absolute/path/to/library",
+  "python": "/absolute/path/to/ocr-venv/bin/python",
+  "modelPath": "/absolute/path/to/Xiaomi-OCR-0",
+  "weightsSha256": "REPLACE_WITH_VERIFIED_MODEL_SAFETENSORS_SHA256",
+  "batchSize": 1,
+  "gpuMemoryGiB": 4
+}

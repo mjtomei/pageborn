@@ -9,7 +9,7 @@ import { speechAssets } from './scripts/stt-assets.mjs';
 
 // Bundle fonts, CMaps and image decoders with the app. PDF rendering never
 // depends on a CDN, even when importing a new file while already offline.
-function pdfResources() {
+export function pdfResources() {
   const root = path.resolve('node_modules/pdfjs-dist');
   const folders = { cmaps: 'cMapUrl', standard_fonts: 'standardFontDataUrl', wasm: 'wasmUrl' };
   return { name: 'local-pdf-resources',
@@ -31,6 +31,28 @@ function pdfResources() {
       for (const folder of ['', ...Object.keys(folders)]) for (const file of readdirSync(path.join(root, folder))) {
         if (file.startsWith('LICENSE')) this.emitFile({ type: 'asset', fileName: `licenses/pdfjs/${folder ? folder + '/' : ''}${file}`, source: readFileSync(path.join(root, folder, file)) });
       }
+    },
+  };
+}
+
+export function ocrResources() {
+  return {
+    name: 'local-ocr-resources',
+    resolveId(id) { if (id === 'virtual:ocr-resources') return '\0ocr-resources'; },
+    load(id) {
+      if (id !== '\0ocr-resources') return;
+      return `export default ${JSON.stringify({
+        core: readFileSync('node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js', 'utf8'),
+        simdCore: readFileSync('node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js', 'utf8'),
+        worker: readFileSync('node_modules/tesseract.js/dist/worker.min.js', 'utf8'),
+        english: readFileSync('node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz').toString('base64'),
+      })}`;
+    },
+    generateBundle() {
+      for (const [name, license] of [['tesseract.js', 'LICENSE.md'], ['tesseract.js-core', 'LICENSE']]) this.emitFile({ type: 'asset',
+        fileName: `licenses/${name}/LICENSE`, source: readFileSync(`node_modules/${name}/${license}`) });
+      this.emitFile({ type: 'asset', fileName: 'licenses/tessdata/LICENSE', source: readFileSync('vendor/licenses/tessdata/LICENSE') });
+      this.emitFile({ type: 'asset', fileName: 'licenses/tesseract.js/worker.min.js.LICENSE.txt', source: readFileSync('node_modules/tesseract.js/dist/worker.min.js.LICENSE.txt') });
     },
   };
 }
@@ -64,25 +86,7 @@ export default defineConfig(({ mode }) => {
       generateBundle() { this.emitFile({ type: 'asset', fileName: 'ask-origins.json', source: JSON.stringify(profile.origins) }); },
     }, { name: 'word-frequency-data', generateBundle() {
       for (const file of readdirSync('vendor/wordfreq')) this.emitFile({ type: 'asset', fileName: `licenses/wordfreq/${file}`, source: readFileSync(`vendor/wordfreq/${file}`) });
-    } }, pdfResources(), speechAssets({ ensemble: true, refinement: false, benchmarks: false }), {
-      name: 'local-ocr-resources',
-      resolveId(id) { if (id === 'virtual:ocr-resources') return '\0ocr-resources'; },
-      load(id) {
-        if (id !== '\0ocr-resources') return;
-        return `export default ${JSON.stringify({
-          core: readFileSync('node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js', 'utf8'),
-          simdCore: readFileSync('node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js', 'utf8'),
-          worker: readFileSync('node_modules/tesseract.js/dist/worker.min.js', 'utf8'),
-          english: readFileSync('node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz').toString('base64'),
-        })}`;
-      },
-      generateBundle() {
-        for (const [name, license] of [['tesseract.js', 'LICENSE.md'], ['tesseract.js-core', 'LICENSE']]) this.emitFile({ type: 'asset',
-          fileName: `licenses/${name}/LICENSE`, source: readFileSync(`node_modules/${name}/${license}`) });
-        this.emitFile({ type: 'asset', fileName: 'licenses/tessdata/LICENSE', source: readFileSync('vendor/licenses/tessdata/LICENSE') });
-        this.emitFile({ type: 'asset', fileName: 'licenses/tesseract.js/worker.min.js.LICENSE.txt', source: readFileSync('node_modules/tesseract.js/dist/worker.min.js.LICENSE.txt') });
-      },
-    }, ...(web ? [{ name: 'compressed-web-assets', writeBundle(options, bundle) {
+    } }, pdfResources(), speechAssets({ ensemble: true, refinement: false, benchmarks: false }), ocrResources(), ...(web ? [{ name: 'compressed-web-assets', writeBundle(options, bundle) {
       for (const item of Object.values(bundle)) {
         if (!/\.(js|css)$/.test(item.fileName)) continue;
         // Vite finalizes preload references late in generateBundle. Compress

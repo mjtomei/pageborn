@@ -1,0 +1,23 @@
+[Unit]
+Description=Pageborne desktop library OCR
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/pageborne
+ExecStart=/usr/bin/flock -n /absolute/path/to/private/ocr.lock /absolute/path/to/node desktop/ocr/daemon.mjs /absolute/path/to/private/ocr.json
+# Inspect a model failure before restarting; never loop through GPU crashes.
+Restart=no
+TimeoutStopSec=15
+KillMode=control-group
+MemoryHigh=8G
+MemoryMax=10G
+MemorySwapMax=0
+OOMPolicy=kill
+CPUQuota=400%
+Nice=10
+Environment=NODE_OPTIONS=--max-old-space-size=2048
+UMask=0077
+
+[Install]
+WantedBy=default.target

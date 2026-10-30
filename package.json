@@ -1,6 +1,6 @@
 {
   "name": "even-reader",
-  "version": "0.8.131",
+  "version": "0.8.132",
   "private": true,
   "type": "module",
   "description": "Markdown and PDF reading on Even G2 glasses, phones and tablets",
@@ -93,7 +93,9 @@
     "test:speech:filenames": "node scripts/speech-filenames-browser-test.mjs",
     "test:text-format": "node scripts/text-format-browser-test.mjs",
     "test:pdf-decoders": "node scripts/pdf-decoders-browser-test.mjs",
-    "test:pdf-scans": "node scripts/pdf-scans-browser-test.mjs"
+    "test:pdf-scans": "node scripts/pdf-scans-browser-test.mjs",
+    "build:ocr": "vite build --config desktop/ocr/vite.config.js",
+    "test:ocr": "node --test test/desktop-ocr.test.js && python3 -m unittest discover -s desktop/ocr -p \"test_*.py\""
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "0.0.14",

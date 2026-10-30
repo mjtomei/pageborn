@@ -258,12 +258,60 @@ export async function librarySnapshotBytes(library, options) {
   if (bytes) check(hash(bytes) === library.sha256, 'Invalid library history.');
   return bytes;
 }
+
+// Private derived artifacts share the library's identity and authentication.
+// The daemon never opens an extra network service for phone requests.
+export async function libraryOcrDirectory(options) {
+  return subdirectory(await rootDirectory(options), 'ocr');
+}
+export function preparationRequest(key) {
+  check(typeof key === 'string' && key.length < 1024, 'Invalid PDF preparation key.');
+  let parsed; try { parsed = JSON.parse(key); } catch { check(false); }
+  const [version, pdfjs, sha256, settings] = parsed || [];
+  check(Array.isArray(parsed) && parsed.length === 4 && Number.isSafeInteger(version) && version > 0
+    && /^\d+\.\d+\.\d+$/.test(pdfjs) && /^[a-f0-9]{64}$/.test(sha256)
+    && settings && ['auto', 'single', 'double'].includes(settings.mode)
+    && ['keepMarginNotes', 'keepRepeatedText', 'normalizeColors', 'reflow'].every(k => typeof settings[k] === 'boolean')
+    && [20, 24, 28].includes(settings.textSize) && Object.keys(settings).length === 6,
+  'Invalid PDF preparation settings.');
+  return { version, pdfjs, sha256, settings };
+}
+export async function libraryPreparation({ name, key, engine: knownEngine, offset, sha256 }, options) {
+  const request = preparationRequest(key);
+  check(/\.pdf$/i.test(nameOf(name)), 'Choose a PDF.');
+  const root = await rootDirectory(options), doc = await documentAt(root, name);
+  expectHash(doc, request.sha256); check(doc, 'Sync the PDF first.', 404);
+  const folder = await subdirectory(root, 'ocr');
+  const stateBytes = await readSafe(path.join(folder, 'daemon.json'), 4096);
+  if (!stateBytes) return { state: 'unavailable' };
+  const state = JSON.parse(stateBytes);
+  check(/^[a-f0-9]{64}$/.test(state.engine), 'Invalid OCR daemon state.');
+  if (state.preparationVersion !== request.version || state.pdfjs !== request.pdfjs || !request.settings.reflow) return { state: 'unavailable' };
+  const engine = await safeDirectory(path.join(folder, state.engine));
+  const prepared = await safeDirectory(path.join(engine, 'prepared'));
+  const bytes = await readSafe(path.join(prepared, hash(key) + '.json'), 16 * 1024 * 1024);
+  if (bytes) {
+    const artifact = JSON.parse(bytes);
+    check(artifact.key === key && artifact.engine === state.engine && artifact.saved?.version === request.version, 'Invalid desktop PDF preparation.');
+    if (offset !== undefined) {
+      check(sha256 === hash(bytes), 'Desktop PDF preparation changed.', 409);
+      check(Number.isSafeInteger(offset) && offset >= 0 && offset < bytes.length, 'Invalid preparation offset.');
+      return { offset, sha256, bytes: bytes.length, data: bytes.subarray(offset, offset+LIBRARY_CHUNK_BYTES).toString('base64') };
+    }
+    return { state: 'ready', key, engine: state.engine, sha256: hash(bytes), bytes: bytes.length,
+      unchanged: knownEngine === state.engine };
+  }
+  if (Date.now() - state.heartbeat > 120_000) return { state: 'unavailable' };
+  const queue = await safeDirectory(path.join(folder, 'requests'));
+  if ((await readdir(queue)).length < 64) await exclusive(path.join(queue, hash(key) + '.json'), Buffer.from(JSON.stringify({ name, key })));
+  return { state: 'pending' };
+}
 export function installLibrarySync(router, options = {}) {
   router.get('/pageborne/library', async (req, res) => {
     try { res.json(await libraryManifest({ name: req.query.name }, options)); }
     catch { res.status(400).json({ error: 'Could not open the desktop library.' }); }
   });
-  for (const [route, action] of Object.entries({ status: libraryUploadStatus, chunk: libraryUploadChunk, commit: libraryCommit, read: libraryRead, remove: libraryRemove })) {
+  for (const [route, action] of Object.entries({ status: libraryUploadStatus, chunk: libraryUploadChunk, commit: libraryCommit, read: libraryRead, remove: libraryRemove, preparation: libraryPreparation })) {
     router.post(`/pageborne/library/${route}`, async (req, res) => {
       try { res.json(await action(req.body || {}, options)); }
       catch (error) { res.status(error.status || 400).json({ error: error.status ? error.message : 'Could not sync this document. Check desktop storage permissions.' }); }

@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-release/
 dist-web/
+dist-ocr/
 .state/
 *.ehpk
 test-results/
