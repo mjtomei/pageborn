@@ -23,7 +23,7 @@ try {
       },
     }], cacheDir: `.state/vite-text-format-${platform}`, server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false });
     await server.listen();
-    try { for (const engine of [chromium, webkit]) {
+    try { for (const engine of process.env.TEXT_FORMAT_BROWSER === 'chromium' ? [chromium] : [chromium, webkit]) {
       const browser = await engine.launch({ headless: true, executablePath: engine === chromium ? '/usr/bin/google-chrome' : process.env.WEBKIT_PATH });
       const page = await browser.newPage({ viewport: { width: 440, height: 806 } });
       const report = { platform, engine: engine.name(), errors: [], passed: false }; reports.push(report);
@@ -86,12 +86,16 @@ try {
         await open('wrapped.txt');
         if (platform === 'glasses') await expect.poll(nativeRows).toEqual(expected);
         else await expect.poll(() => page.locator('.web-prose').innerHTML()).toBe(expected);
-        const stored = await page.evaluate(() => new Promise((resolve, reject) => {
-          const request = indexedDB.open('even-reader', 1);
-          request.onsuccess = () => { const db = request.result, get = db.transaction('data').objectStore('data').get('snapshot');
-            get.onsuccess = () => { resolve(get.result.documents.map(d => d.content)); db.close(); }; get.onerror = () => reject(get.error); };
-          request.onerror = () => reject(request.error);
-        }));
+        const stored = await page.evaluate(async platform => {
+          if (platform === 'web') {
+            const { LocalLibrary } = await import('/src/library.js');
+            return (await new LocalLibrary().read()).documents.map(doc => doc.content);
+          }
+          const { AtomicPhoneValue, readChunks } = await import('/src/phone-storage.js');
+          const kv = { get: key => window.__storage({ method: 'getLocalStorage', data: { key } }) };
+          const catalog = await new AtomicPhoneValue(kv, 'library').read();
+          return Promise.all(catalog.documents.map(doc => readChunks(kv, doc.body)));
+        }, platform);
         assert.deepEqual(stored, [content, content]); assert.deepEqual(report.errors, []);
         await page.screenshot({ path: `${out}/${platform}-${engine.name()}.png` });
         report.passed = true;

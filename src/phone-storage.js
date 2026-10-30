@@ -1,4 +1,4 @@
-import { addDocument, replaceDocument, updateDocumentDates, assertDocumentUnchanged, localSnapshot, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
+import { addDocument, replaceDocument, updateDocumentDates, assertDocumentUnchanged, localSnapshot, documentMetadata, hashDocument, MAX_DOCUMENTS } from './library.js';
 
 export const STORAGE_PREFIX = 'even-reader:phone:v1';
 export const CHUNK_CHARS = 32000;
@@ -22,13 +22,14 @@ export function descriptor(prefix, text, chunks) { return { prefix, count: chunk
 function validateDescriptor(value) {
   if (!value || typeof value.prefix !== 'string' || !value.prefix.startsWith(STORAGE_PREFIX + ':')
     || !Number.isInteger(value.count) || value.count < 0 || value.count > 4096
-    || !Number.isInteger(value.length) || value.length < 0 || value.length > MAX_LIBRARY_BYTES * 2
+    || !Number.isInteger(value.length) || value.length < 0 || value.length > 128 * 1024 * 1024
     || typeof value.checksum !== 'string') throw new Error('Saved phone data is invalid. No files were changed.');
 }
-export async function readChunks(kv, ref) {
+export async function readChunks(kv, ref, { signal } = {}) {
   validateDescriptor(ref);
   const chunks = [];
-  for (let i = 0; i < ref.count; i++) chunks.push(await kv.get(`${ref.prefix}:${i}`));
+  for (let i = 0; i < ref.count; i++) { signal?.throwIfAborted(); chunks.push(await kv.get(`${ref.prefix}:${i}`)); }
+  signal?.throwIfAborted();
   const text = chunks.join('');
   if (text.length !== ref.length || checksum(text) !== ref.checksum) throw new Error('Saved phone data is incomplete. No files were changed.');
   return text;
@@ -71,8 +72,8 @@ export function bridgeStorage(bridge, lane) {
 }
 
 export class PhoneLibrary {
-  constructor(kv) {
-    this.kv = kv; this.index = new AtomicPhoneValue(kv, 'library');
+  constructor(kv, { lazy = false } = {}) {
+    this.lazy = lazy; this.kv = kv; this.index = new AtomicPhoneValue(kv, 'library');
     this.catalog = { version: 1, migrated: false, documents: [] };
     this.snapshot = localSnapshot(null); this.tail = Promise.resolve(); this.uncertain = false;
   }
@@ -81,7 +82,8 @@ export class PhoneLibrary {
       if (this.uncertain) throw new Error('The last phone save could not be confirmed. Close and reopen the reader before changing files.');
       return work();
     });
-    this.tail = result; return result;
+    // The queue must not retain the last loaded/saved document body.
+    this.tail = result.then(() => {}, () => {}); return result;
   }
   async recover() {
     const raw = await this.kv.get(JOURNAL);
@@ -109,12 +111,13 @@ export class PhoneLibrary {
     for (const meta of this.catalog.documents) {
       onProgress(`Opening saved documents (${documents.length + 1}/${this.catalog.documents.length})…`);
       const { body, ...doc } = meta;
-      documents.push({ ...doc, content: await readChunks(this.kv, body) });
+      validateDescriptor(body);
+      documents.push({ ...doc, revision: body.prefix, ...(this.lazy ? {} : { content: await readChunks(this.kv, body) }) });
     }
     this.snapshot = localSnapshot({ documents });
     await this.recover();
     if (!this.catalog.migrated) {
-      const old = localSnapshot(legacy);
+      const old = localSnapshot(typeof legacy === 'function' ? await legacy() : legacy);
       for (const doc of old.documents) {
         if (this.snapshot.documents.some(saved => saved.id === doc.id)) continue;
         onProgress(`Saving ${doc.id} to phone storage…`);
@@ -123,6 +126,23 @@ export class PhoneLibrary {
       await this.commit({ ...this.catalog, migrated: true });
     }
     return this.snapshot;
+  }
+  loadDocument(expected, { signal } = {}) {
+    return this.serialize(async () => {
+      signal?.throwIfAborted();
+      const meta = this.catalog.documents.find(doc => doc.id === expected.id);
+      assertDocumentUnchanged(meta && { ...meta, revision: meta.body.prefix }, expected);
+      const { body, ...doc } = meta;
+      return { ...doc, revision: body.prefix, content: await readChunks(this.kv, body, { signal }) };
+    });
+  }
+  cacheHash(expected, sha256) {
+    return this.serialize(async () => {
+      assertDocumentUnchanged(this.snapshot.documents.find(doc => doc.id === expected.id), expected);
+      await this.commit({ ...this.catalog, documents: this.catalog.documents.map(doc => doc.id === expected.id ? { ...doc, sha256 } : doc) });
+      this.snapshot = { ...this.snapshot, documents: this.snapshot.documents.map(doc => doc.id === expected.id ? { ...doc, sha256 } : doc) };
+      return { snapshot: this.snapshot };
+    });
   }
   put(document, expected) { return this.save(document, () => {}, false, expected); }
   updateDates(updates) {
@@ -145,9 +165,11 @@ export class PhoneLibrary {
         result.document.positionKey = document.positionKey;
         if (!document.addedAt) delete result.document.addedAt;
       }
+      result.document.sha256 = crypto.subtle ? await hashDocument(result.document) : undefined;
       const chunks = chunksOf(result.document.content);
       const nonce = Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
       const body = descriptor(`${STORAGE_PREFIX}:doc:${nonce}`, result.document.content, chunks);
+      result.document.revision = body.prefix;
       await this.kv.set(JOURNAL, JSON.stringify(body));
       onProgress({ loaded: 0, total: chunks.length + 1 });
       for (let i = 0; i < chunks.length; i++) {
@@ -158,6 +180,7 @@ export class PhoneLibrary {
       await this.commit({ ...this.catalog, documents: old
         ? this.catalog.documents.map(doc => doc.id === document.id ? { ...meta, body } : doc)
         : [...this.catalog.documents, { ...meta, body }] });
+      if (this.lazy) result.snapshot.documents = result.snapshot.documents.map(documentMetadata);
       this.snapshot = result.snapshot;
       onProgress({ loaded: chunks.length + 1, total: chunks.length + 1 });
       // The index is committed. A failed cleanup must not report this file as

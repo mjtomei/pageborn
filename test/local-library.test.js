@@ -26,7 +26,7 @@ test('local capacity checks leave the saved snapshot intact', () => {
   const full = { documents: Array.from({ length: MAX_DOCUMENTS }, (_, i) => ({ ...doc, id: `${i}.md` })) };
   assert.throws(() => addDocument(full, doc), /1,000/);
   const large = { documents: [{ ...doc, bytes: MAX_LIBRARY_BYTES }] };
-  assert.throws(() => addDocument(large, doc), /64 MiB/);
+  assert.throws(() => addDocument(large, doc), /1024 MiB/);
   assert.equal(large.documents.length, 1);
 });
 test('downloaded documents retain content and the old reading-position key without a connection', () => {

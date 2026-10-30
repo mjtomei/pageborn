@@ -1,10 +1,13 @@
 import { base64ToBytes, bytesToBase64 } from './binary.js';
-import { readLocalFile, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
+import { readLocalFile, hashDocument, MAX_DOCUMENTS, MAX_LIBRARY_BYTES } from './library.js';
 import { libraryTimestamp } from './library-order.js';
 
 const CHUNK_BYTES = 768 * 1024, encoder = new TextEncoder();
 const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(n => n.toString(16).padStart(2, '0')).join('');
-export const documentBytes = doc => doc.format === 'pdf' ? base64ToBytes(doc.content) : encoder.encode(doc.content);
+export const documentBytes = doc => {
+  if (typeof doc?.content !== 'string') throw new Error('Load the document before reading its contents.');
+  return doc.format === 'pdf' ? base64ToBytes(doc.content) : encoder.encode(doc.content);
+};
 export async function documentDescriptor(doc) {
   const bytes = documentBytes(doc);
   return { name: doc.id, bytes: bytes.length, sha256: await digest(bytes) };
@@ -83,7 +86,20 @@ export function planLibrarySync(localFiles, remote, baseline = {}) {
 export async function syncLibrary({ client, snapshot, store, saved = {}, saveState, changed = () => {}, progress = () => {}, signal }) {
   progress('Checking desktop library…');
   const remote = await desktopLibrary(client, signal), localFiles = [];
-  for (const doc of snapshot.documents) { signal?.throwIfAborted(); localFiles.push(await documentDescriptor(doc)); }
+  const load = async doc => {
+    signal?.throwIfAborted();
+    return typeof doc.content === 'string' ? doc : store.loadDocument(doc, { signal });
+  };
+  for (const doc of snapshot.documents) {
+    signal?.throwIfAborted();
+    let sha256 = /^[a-f0-9]{64}$/.test(doc.sha256 || '') ? doc.sha256 : null;
+    if (!sha256) {
+      progress(`Checking ${doc.id}…`);
+      sha256 = await hashDocument(await load(doc));
+      await store.cacheHash?.(doc, sha256);
+    }
+    localFiles.push({ name: doc.id, bytes: doc.bytes, sha256 });
+  }
   const baseline = saved.id === remote.id ? saved.files || {} : {};
   const actions = planLibrarySync(localFiles, remote, baseline);
   const finalFiles = new Map(localFiles.map(f => [f.name, f]));
@@ -128,7 +144,8 @@ export async function syncLibrary({ client, snapshot, store, saved = {}, saveSta
   }
   for (const action of actions) {
     signal?.throwIfAborted(); progress(`Syncing ${action.name}…`);
-    const doc = current.documents.find(d => d.id === action.name);
+    const meta = current.documents.find(d => d.id === action.name);
+    const doc = ['upload', 'conflict'].includes(action.kind) ? await load(meta) : meta;
     if (action.kind === 'upload') {
       await uploadLibraryFile(client, action.file, documentBytes(doc), action.expected, signal, progress);
       hashes[action.name] = action.file.sha256; counts.uploaded++;

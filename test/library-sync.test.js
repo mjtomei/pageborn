@@ -18,12 +18,12 @@ import { orderedDocuments } from '../src/library-order.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const document = (name, content) => readLocalFile(new File([content], name));
-async function fixture(t) {
+async function fixture(t, lazy = false) {
   const libraryDir = await mkdtemp(path.join(tmpdir(), 'pageborne-library-'));
   t.after(() => rm(libraryDir, { recursive: true, force: true }));
   const options = { libraryDir }, values = new Map();
   const kv = { async get(key) { return values.get(key) || ''; }, async set(key, value) { values.set(key, value); } };
-  const store = new PhoneLibrary(kv); await store.read(); const calls = [];
+  const store = new PhoneLibrary(kv, { lazy }); await store.read(); const calls = [];
   const actions = { status: libraryUploadStatus, chunk: libraryUploadChunk, commit: libraryCommit, read: libraryRead, remove: libraryRemove };
   const papers = { status: paperFilesStatus, chunk: paperFileChunk, commit: commitPaperFiles };
   const client = { serverInfo: async () => ({ pageborne: workspaceCapabilities() }), async api(route, { body = {}, signal, query = {} } = {}) {
@@ -172,7 +172,7 @@ test('new library identity does not inherit old deletions; final phone size is c
     return { version: 1, id: 'large', directory: '/fixture', files: Array.from({ length: Math.floor(MAX_LIBRARY_BYTES / MAX_PDF_BYTES) + 1 }, (_, i) => ({ name: `${i}.pdf`, bytes: MAX_PDF_BYTES, sha256: hash(String(i)) })) };
   } };
   await assert.rejects(f.sync({ client }), error => error.code === 'library-capacity'
-    && /phone limit is 64 MiB/.test(error.message) && error.totalBytes > MAX_LIBRARY_BYTES);
+    && /phone limit is 1024 MiB/.test(error.message) && error.totalBytes > MAX_LIBRARY_BYTES);
   assert.equal(f.store.snapshot.documents.length, 1);
 });
 
@@ -331,4 +331,34 @@ test('sync backfills original addition dates without downloading bodies or reloa
   const docs = reopened.snapshot.documents;
   const added = docs.find(doc => doc.id === 'newer.txt').addedAt;
   assert.deepEqual(orderedDocuments(docs, { openedAt: { 'older.txt': added - 1 } }).map(doc => doc.id), ['newer.txt', 'older.txt']);
+});
+
+
+test('lazy sync exchanges edits and conflict copies without keeping document bodies in the catalog', async t => {
+  const f = await fixture(t, true);
+  await f.store.save(await document('paper.md', 'original'));
+  await f.sync();
+  const reads = [], get = f.kv.get.bind(f.kv); f.kv.get = key => { reads.push(key); return get(key); };
+  await f.sync();
+  assert.equal(reads.filter(key => key.includes(':doc:')).length, 0, 'unchanged sync uses saved content hashes');
+  await writeFile(path.join(f.libraryDir, 'paper.md'), 'desktop edit');
+  await f.store.put(await document('paper.md', 'phone edit'), f.store.snapshot.documents[0]);
+  await f.sync();
+  const docs = f.store.snapshot.documents;
+  assert(docs.every(doc => !('content' in doc)));
+  assert.equal((await f.store.loadDocument(docs.find(doc => doc.id === 'paper.md'))).content, 'desktop edit');
+  assert.equal((await f.store.loadDocument(docs.find(doc => doc.id !== 'paper.md'))).content, 'phone edit');
+  assert.equal(await readFile(path.join(f.libraryDir, docs.find(doc => doc.id !== 'paper.md').id), 'utf8'), 'phone edit');
+});
+
+test('legacy lazy libraries hash originals once and persist hashes for subsequent syncs', async t => {
+  const f = await fixture(t, true);
+  await f.store.save(await document('old.txt', 'legacy'));
+  for (const doc of f.store.catalog.documents) delete doc.sha256;
+  await f.store.commit(f.store.catalog);
+  await f.store.read();
+  let bodies = 0; const get = f.kv.get.bind(f.kv); f.kv.get = key => { if (key.includes(':doc:')) bodies++; return get(key); };
+  await f.sync(); assert(bodies > 0);
+  bodies = 0; await f.store.read(); await f.sync();
+  assert.equal(bodies, 0);
 });

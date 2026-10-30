@@ -86,7 +86,8 @@ const pdfPreparations = new Set();
 let pdfProgressRefresh = null;
 let pendingPdfPosition = null;
 let pdfNotes = null; let footnotesView = null; let askUI;
-const browserStore = new LocalLibrary();
+const browserStore = new LocalLibrary({ lazy: true });
+let documentLoadController = null;
 let pdfPreparationCache = new PdfPreparationCache(browserPdfStorage(browserStore));
 let store = browserStore; let phonePreferences = null; let openingLibrary = null;
 const previewContext = $('preview').getContext('2d');
@@ -543,7 +544,9 @@ async function trackPdfPreparation(work) {
   }
 }
 
-function selectDocument(id, save = true) {
+async function selectDocument(id, save = true) {
+  documentLoadController?.abort();
+  documentLoadController = null;
   previewInput?.cancel(); previewMenu = null;
   askUI?.close();
   if ($('value-dialog').open) $('value-dialog').close();
@@ -562,9 +565,30 @@ function selectDocument(id, save = true) {
   active = snapshot?.documents.find(d => d.id === id) || null;
   diagnostics.renderer = active?.format === 'pdf' ? 'pdf-image' : 'native-text';
   layout = null;
+  const resetWeb = WEB ? webReading.setDocument(null).catch(error => diagnostics.error('web-close-error', error)) : null;
   if (active) {
     if (save) recordDocumentOpen(preferences, active.id);
     $('title').textContent = active.title; $('doc-path').textContent = active.id;
+    if (typeof active.content !== 'string') {
+      const controller = new AbortController(), selected = active; documentLoadController = controller;
+      reader.setDocument(0); passage.setLayout(null, 0);
+      pdfOpenMessage = { body: 'Opening document…', status: 'Loading', kind: 'loading' };
+      notice('Opening document…'); lastPassage = -1; lastSentKey = ''; dirty = true;
+      renderLibrary(); renderOutline(); renderBookmarks(); renderControls();
+      try {
+        const document = await trackPdfPreparation(async () => {
+          await resetWeb; controller.signal.throwIfAborted();
+          return store.loadDocument(selected, { signal: controller.signal });
+        });
+        if (version !== selectionVersion) return;
+        active = document; pdfOpenMessage = null; notice('');
+      } catch (error) {
+        if (version !== selectionVersion || controller.signal.aborted) return;
+        notice(`Could not open document: ${storageMessage(error)}`, true);
+        pdfOpenMessage = { body: 'Could not open document.\nOpen the phone app for details.\nDouble tap to choose another file.', status: 'File error', kind: 'error' };
+        dirty = true; renderControls(); return;
+      } finally { if (documentLoadController === controller) documentLoadController = null; }
+    }
     if (WEB) {
       const saved = preferences.positions[documentKey()];
       if (active.format !== 'pdf') buildLayout();
@@ -672,7 +696,6 @@ function selectDocument(id, save = true) {
       reader.setSpeedDocument(layout, preferences.positions[documentKey()]?.speedCursor);
     }
   } else {
-    if (WEB) void webReading.setDocument(null);
     delete preferences.selected;
     picker = openDocumentPicker(libraryDocuments());
     reader.setDocument(0); $('title').textContent = 'Choose something good.';
@@ -1019,7 +1042,6 @@ async function startLibrarySync() {
         if (selectedId === id) rememberPosition();
         snapshot = result.snapshot;
         if (id) await pdfPreparationCache.remove(id).catch(error => diagnostics.error('pdf-cache-delete-error', error));
-        if (store !== browserStore) await browserStore.replace(snapshot).catch(() => {});
         if (selectedId === id) {
           if (!snapshot.documents.some(doc => doc.id === id)) delete preferences.selected;
           selectDocument(snapshot.documents.some(doc => doc.id === id) ? id : null, false);
@@ -1079,7 +1101,6 @@ const imports = new ImportQueue({
   prepare: readFileInBackground,
   save: async (document, onProgress) => {
     const result = await store.save(document, onProgress);
-    if (store !== browserStore) await browserStore.replace(result.snapshot).catch(() => {});
     snapshot = result.snapshot; refreshDocumentPicker(); renderLibrary();
     // Keep the current document and playback untouched, including for the
     // first import. Opening a file is a separate, explicit action.
@@ -1150,7 +1171,6 @@ async function deleteDocument(id) {
   try {
     const result = await store.remove(id);
     await pdfPreparationCache.remove(id).catch(error => diagnostics.error('pdf-cache-delete-error', error));
-    if (store !== browserStore) await browserStore.replace(result.snapshot).catch(() => {});
     rememberPosition(); snapshot = result.snapshot; deleteId = null;
     if (preferences.recent) preferences.recent = preferences.recent.filter(item => item !== id);
     if (preferences.openedAt) delete preferences.openedAt[id];
@@ -1514,7 +1534,7 @@ function animate(now, immediate = false) {
   playbackBlocked = waitingForDisplay || displayBusy;
   reader.tick((now - tickStart) / 1000, waitingForDisplay, !displayBusy); lastTick = now;
   if (dirty) {
-    const message = active?.format === 'pdf' && !layout ? pdfOpenMessage
+    const message = active && !layout ? pdfOpenMessage
       : !libraryReady ? { body: 'Opening your saved library…', status: 'Loading', kind: 'loading' } : null;
     const frame = { layout, y: reader.y, title: active?.title, mode: reader.mode, playing: reader.playing,
       speed: reader.speed, picker: picker ? { ...picker, syncEnabled: true, syncing: !!librarySync, syncStatus: librarySyncLabel } : null, positionPicker, selection: selectionVersion, message,
@@ -1627,7 +1647,7 @@ async function openLibrary() {
     else await (voiceStartup ||= startVoiceSetup());
     await imports.idle();
     const hasHost = !!window.flutter_inappwebview?.callHandler;
-    const legacy = await browserStore.read().catch(error => { if (!hasHost) throw error; return null; });
+    const legacy = () => new LocalLibrary().read().catch(error => { if (!hasHost) throw error; return null; });
     if (hasHost) {
       notice('Opening your saved phone library…');
       const bridge = await waitForEvenAppBridge();
@@ -1635,7 +1655,7 @@ async function openLibrary() {
       askUI.speech.setStorage(kv);
       const nextPreferences = new PhonePreferences(kv, error => notice(`Could not save your reading position: ${error.message}`, true));
       const savedPreferences = await nextPreferences.read(preferences);
-      const phoneStore = new PhoneLibrary(kv);
+      const phoneStore = new PhoneLibrary(kv, { lazy: true });
       snapshot = await phoneStore.read(legacy, text => notice(text));
       store = phoneStore; preferences = savedPreferences;
       migrateTerminalPreferences(preferences, privateTerminalConfig()); askUI.load();
@@ -1659,8 +1679,7 @@ async function openLibrary() {
         installDiagnosticCheckpoint(diagnostics, savedDiagnostics);
         voiceDiagnosticsInstalled = true;
       }
-      await browserStore.replace(snapshot).catch(() => {});
-    } else snapshot = legacy;
+    } else snapshot = await browserStore.read();
     await pdfPreparationCache.retain(snapshot.documents.map(doc => doc.id)).catch(error => diagnostics.error('pdf-cache-cleanup-error', error));
     libraryReady = true; $('import').disabled = false; notice('');
     if (WEB) await sharedReader.sync(); else void sharedReader.sync();

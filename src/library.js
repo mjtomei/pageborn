@@ -1,9 +1,9 @@
-import { bytesToBase64 } from './binary.js';
+import { base64ToBytes, bytesToBase64 } from './binary.js';
 import { libraryTimestamp } from './library-order.js';
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_PDF_BYTES = 16 * 1024 * 1024;
-export const MAX_LIBRARY_BYTES = 64 * 1024 * 1024;
+export const MAX_LIBRARY_BYTES = 1024 * 1024 * 1024;
 export const MAX_DOCUMENTS = 1000;
 const encoder = new TextEncoder();
 export function countWords(text) {
@@ -16,7 +16,9 @@ export function countWords(text) {
 // positionKey preserves bookmarks/positions without depending on a connection.
 export function localSnapshot(saved) {
   return { localVersion: 1, documents: (saved?.documents || []).map(doc => ({
-    id: doc.id, title: doc.title, content: doc.content,
+    id: doc.id, title: doc.title, ...(typeof doc.content === 'string' ? { content: doc.content } : {}),
+    ...(doc.revision ? { revision: doc.revision } : {}),
+    ...(doc.sha256 ? { sha256: doc.sha256 } : {}),
     bytes: doc.bytes ?? encoder.encode(doc.content).length,
     words: doc.words ?? countWords(doc.content),
     positionKey: doc.positionKey || `${saved?.server || 'local'}\n${doc.id}`,
@@ -97,23 +99,44 @@ export function updateDocumentDates(saved, updates) {
   const snapshot = localSnapshot(saved);
   for (const update of updates) {
     const doc = snapshot.documents.find(doc => doc.id === update.id);
-    if (!doc || doc.content !== update.expected.content || doc.format !== update.expected.format) continue;
+    if (!doc || !sameDocument(doc, update.expected)) continue;
     if (libraryTimestamp(update.addedAt)) doc.addedAt = Math.min(libraryTimestamp(doc.addedAt) || Infinity, update.addedAt);
     if (libraryTimestamp(update.modifiedAt)) doc.modifiedAt = update.modifiedAt;
   }
   return { snapshot };
 }
+export function sameDocument(prior, expected) {
+  if (!prior || !expected) return !prior && !expected;
+  if (prior.format !== expected.format) return false;
+  // A missing body is not evidence that two revisions have the same content.
+  if (prior.revision || expected.revision) return !!prior.revision && prior.revision === expected.revision;
+  return typeof prior.content === 'string' && prior.content === expected.content;
+}
 export function assertDocumentUnchanged(prior, expected) {
-  if (!!prior !== !!expected || prior && (prior.content !== expected.content || prior.format !== expected.format)) {
+  if (!sameDocument(prior, expected)) {
     throw new Error('The phone library changed during sync. Sync again to preserve those changes.');
   }
+}
+export function documentRevision() {
+  return Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
+}
+export function documentMetadata({ content, ...meta }) { return meta; }
+export async function hashDocument(doc) {
+  if (typeof doc.content !== 'string') throw new Error('Load the document before reading its contents.');
+  const bytes = doc.format === 'pdf' ? base64ToBytes(doc.content) : encoder.encode(doc.content);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, '0')).join('');
 }
 
 export class LocalLibrary {
   async open() {
     if (!this.opening) this.opening = new Promise((resolve, reject) => {
-      const request = indexedDB.open('even-reader', 1);
-      request.onupgradeneeded = () => request.result.createObjectStore('data');
+      // Closing old-version connections prevents older tabs from writing the
+      // former all-in-one snapshot over the new per-document catalog.
+      const request = indexedDB.open('even-reader', 2);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('data')) request.result.createObjectStore('data');
+      };
       request.onsuccess = () => {
         const db = request.result;
         db.onversionchange = () => { db.close(); this.opening = null; };
@@ -123,43 +146,101 @@ export class LocalLibrary {
     });
     return this.opening;
   }
-  async read() {
+  constructor({ lazy = false } = {}) { this.lazy = lazy; }
+  async catalog(change = null) {
     const db = await this.open();
     return new Promise((resolve, reject) => {
-      const request = db.transaction('data').objectStore('data').get('snapshot');
-      request.onsuccess = () => resolve(localSnapshot(request.result));
-      request.onerror = () => reject(request.error);
-    });
-  }
-  async update(change) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction('data', 'readwrite');
-      const store = transaction.objectStore('data');
-      let result; let failure;
+      const transaction = db.transaction('data', 'readwrite'), store = transaction.objectStore('data');
+      let result, failure;
       const request = store.get('snapshot');
       request.onsuccess = () => {
-        try { result = change(localSnapshot(request.result)); store.put(result.snapshot, 'snapshot'); }
-        catch (error) { failure = error; transaction.abort(); }
+        try {
+          const saved = request.result;
+          const snapshot = localSnapshot(saved);
+          if (saved?.localVersion !== 2) {
+            // One atomic upgrade: metadata and per-file records replace the
+            // old all-in-one value only when every write succeeds.
+            snapshot.documents = snapshot.documents.map(doc => {
+              const next = { ...doc, revision: documentRevision() };
+              store.put(next.content, `document:${next.id}`);
+              return documentMetadata(next);
+            });
+          }
+          result = change ? change(snapshot, store) : { snapshot };
+          if (change || saved?.localVersion !== 2) store.put({ ...result.snapshot, localVersion: 2 }, 'snapshot');
+        } catch (error) { failure = error; transaction.abort(); }
       };
       transaction.oncomplete = () => resolve(result);
       transaction.onerror = transaction.onabort = () => reject(failure || transaction.error || new Error('Could not save the library on this phone.'));
     });
   }
-  async add(file) {
-    return this.save(await readLocalFile(file));
+  async read() {
+    const { snapshot } = await this.catalog();
+    if (this.lazy) return snapshot;
+    return { ...snapshot, documents: await Promise.all(snapshot.documents.map(doc => this.loadDocument(doc))) };
   }
-  async save(document) {
-    // Read-modify-write in one transaction also serializes multiple open tabs.
-    return this.update(snapshot => addDocument(snapshot, document));
-  }
-  async put(document, expected) { return this.update(snapshot => replaceDocument(snapshot, document, expected)); }
-  async updateDates(updates) { return this.update(snapshot => updateDocumentDates(snapshot, updates)); }
-  async remove(id, expected = undefined) {
-    return this.update(snapshot => {
-      if (expected !== undefined) assertDocumentUnchanged(snapshot.documents.find(doc => doc.id === id), expected);
-      return { snapshot: { ...snapshot, documents: snapshot.documents.filter(doc => doc.id !== id) } };
+  async loadDocument(expected, { signal } = {}) {
+    signal?.throwIfAborted();
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('data'), store = transaction.objectStore('data');
+      let result, failure;
+      const request = store.get('snapshot');
+      request.onsuccess = () => {
+        try {
+          signal?.throwIfAborted();
+          const meta = request.result?.documents.find(doc => doc.id === expected.id);
+          assertDocumentUnchanged(meta, expected);
+          const body = store.get(`document:${expected.id}`);
+          body.onsuccess = () => {
+            if (typeof body.result !== 'string') failure = new Error('Saved document is incomplete. No files were changed.');
+            else result = { ...meta, content: body.result };
+          };
+        } catch (error) { failure = error; transaction.abort(); }
+      };
+      transaction.oncomplete = () => {
+        if (signal?.aborted) reject(signal.reason);
+        else if (failure) reject(failure); else resolve(result);
+      };
+      transaction.onerror = transaction.onabort = () => reject(failure || transaction.error);
     });
   }
-  async replace(snapshot) { return this.update(() => ({ snapshot: localSnapshot(snapshot) })); }
+  async cacheHash(expected, sha256) {
+    return this.catalog(snapshot => {
+      const doc = snapshot.documents.find(doc => doc.id === expected.id);
+      assertDocumentUnchanged(doc, expected); doc.sha256 = sha256;
+      return { snapshot };
+    });
+  }
+  async result(work) {
+    const result = await work;
+    return this.lazy ? result : { ...result, snapshot: await this.read() };
+  }
+  async add(file) { return this.save(await readLocalFile(file)); }
+  async save(document) {
+    const next = { ...document, revision: documentRevision(), sha256: crypto.subtle ? await hashDocument(document) : undefined };
+    return this.result(this.catalog((snapshot, store) => {
+      const result = addDocument(snapshot, next);
+      store.put(next.content, `document:${result.document.id}`);
+      result.snapshot.documents = result.snapshot.documents.map(documentMetadata);
+      return result;
+    }));
+  }
+  async put(document, expected) {
+    const next = { ...document, revision: documentRevision(), sha256: crypto.subtle ? await hashDocument(document) : undefined };
+    return this.result(this.catalog((snapshot, store) => {
+      const result = replaceDocument(snapshot, next, expected);
+      store.put(next.content, `document:${result.document.id}`);
+      result.snapshot.documents = result.snapshot.documents.map(documentMetadata);
+      return result;
+    }));
+  }
+  async updateDates(updates) { return this.result(this.catalog(snapshot => updateDocumentDates(snapshot, updates))); }
+  async remove(id, expected = undefined) {
+    return this.result(this.catalog((snapshot, store) => {
+      if (expected !== undefined) assertDocumentUnchanged(snapshot.documents.find(doc => doc.id === id), expected);
+      store.delete(`document:${id}`);
+      return { snapshot: { ...snapshot, documents: snapshot.documents.filter(doc => doc.id !== id) } };
+    }));
+  }
 }

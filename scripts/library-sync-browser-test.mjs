@@ -100,12 +100,12 @@ try {
   assert.equal(await readFile(path.join(libraryDir, 'phone.txt'), 'utf8'), 'Uploaded from phone.');
   await expect.poll(() => page.evaluate(() => window.__status)).toMatch(/Library synced\s+Tap to open · Hold to sync/);
   result.glassesHold = true;
-  manifestFixture = { version: 1, id: 'capacity-fixture', directory: '/fixture', files: Array.from({ length: 5 }, (_, i) => ({
+  manifestFixture = { version: 1, id: 'capacity-fixture', directory: '/fixture', files: Array.from({ length: 65 }, (_, i) => ({
     name: `${i}.pdf`, bytes: 16 * 1024 * 1024, sha256: 'a'.repeat(64),
   })) };
   const beforeCapacity = manifestCalls;
   await page.locator('#library-sync').click();
-  await expect(page.locator('#library-sync-status')).toContainText('phone limit is 64 MiB');
+  await expect(page.locator('#library-sync-status')).toContainText('phone limit is 1024 MiB');
   await expect.poll(() => page.evaluate(() => window.__status)).toContain('Library full; see phone');
   assert.equal(manifestCalls - beforeCapacity, 1, 'capacity failure must not transfer or delete files');
   await expect(page.locator('#doc-count')).toHaveText('3');

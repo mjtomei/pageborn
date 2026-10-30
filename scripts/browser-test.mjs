@@ -4,7 +4,7 @@ import { mkdtemp, rm, mkdir, writeFile, readFile, access, readdir } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
-import { AtomicPhoneValue } from '../src/phone-storage.js';
+import { AtomicPhoneValue, readChunks } from '../src/phone-storage.js';
 import { runTableStressBrowser } from './table-stress.mjs';
 import { speedToSlider } from '../src/reader.js';
 import { showLibrary, showTool, showDockOptions, showSettings, hideSettings } from './ui-helpers.mjs';
@@ -66,10 +66,12 @@ await installBridge(context);
 const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
 const until = (condition, argument) => page.waitForFunction(condition, argument, { timeout: 12000 });
 const event = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('evenHubEvent', { detail })), detail);
-const storedSnapshot = () => page.evaluate(() => new Promise((resolve, reject) => {
-  const open = indexedDB.open('even-reader', 1);
-  open.onsuccess = () => { const db = open.result; const req = db.transaction('data').objectStore('data').get('snapshot'); req.onsuccess = () => { resolve(req.result); db.close(); }; req.onerror = () => reject(req.error); };
-}));
+// Native companion storage is authoritative; the app no longer mirrors all bodies into IndexedDB.
+const storedSnapshot = async () => {
+  const kv = { get: async key => phoneData.get(key) || '' };
+  const catalog = await new AtomicPhoneValue(kv, 'library').read();
+  return { documents: await Promise.all(catalog.documents.map(async ({ body, ...doc }) => ({ ...doc, content: await readChunks(kv, body) }))) };
+};
 const click = async id => { if (['import', 'clear-imports'].includes(id)) await showLibrary(page); if (/^(mode-|speed|word-group)/.test(id)) await showDockOptions(page); return page.locator(`#${id}`).click(); };
 const setTextSize = async size => { await showSettings(page); await page.locator('#font-size').selectOption(size); await hideSettings(page); };
 const percent = async () => Number((await page.locator('#position-value').innerText()).replace('%', ''));

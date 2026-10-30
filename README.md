@@ -17,6 +17,8 @@ G2 supports native text, PDF reflow/figures, page reading, timed autoscroll and 
 
 An optional [desktop OCR daemon](desktop/ocr/README.md) uses Xiaomi-OCR-0 to prepare scanned library PDFs ahead of reading. Completed preparations sync through the shared library and stay cached on the phone. The existing on-device OCR remains available when the desktop has no matching result.
 
+The library supports **1 GiB of originals across up to 1,000 documents** (16 MiB per PDF, 4 MiB per text file). Startup loads the catalog only; document contents load when opened or needed by sync. Existing files and reading positions migrate automatically. Available device storage still applies.
+
 The library defaults to **Recent activity**: the newest addition, modification or explicit opening comes first. **Newest added** and **File name A–Z** are available on the phone. With even-terminal-patch 0.2.3, desktop addition dates are retained separately from original file modification dates and recovered for already-synced files. Older servers use the phone import date for new downloads; legacy files without dates retain their previous relative order.
 
 Markdown and `.txt` files use the same formatting on glasses and the web reader: single newlines within prose flow together, while blank lines separate paragraphs. Headings, lists and fenced code blocks follow Markdown formatting. The stored original stays unchanged.

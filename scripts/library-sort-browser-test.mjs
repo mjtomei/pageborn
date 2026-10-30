@@ -19,7 +19,7 @@ try {
       },
     }], cacheDir: `.state/vite-library-sort-${platform}`, server: { host: '127.0.0.1', port: 0, hmr: false, watch: null }, clearScreen: false });
     await server.listen();
-    try { for (const engine of [chromium, webkit]) {
+    try { for (const engine of process.env.LIBRARY_SORT_BROWSER === 'chromium' ? [chromium] : [chromium, webkit]) {
       const browser = await engine.launch({ headless: true, executablePath: engine === chromium ? '/usr/bin/google-chrome' : process.env.WEBKIT_PATH });
       const page = await browser.newPage({ viewport: { width: 440, height: 806 } });
       const report = { platform, engine: engine.name(), errors: [], passed: false }; reports.push(report);

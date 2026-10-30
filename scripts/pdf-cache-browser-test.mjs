@@ -21,7 +21,7 @@ page.on('pageerror', error => result.errors.push(error.message));
 const diagnostic = () => page.evaluate(() => JSON.parse(localStorage.getItem('even-reader:diagnostics:v1')));
 const ready = () => waitForPdfReady(page, 30000);
 const cacheData = async action => page.evaluate(async action => {
-  const db = await new Promise((resolve, reject) => { const req = indexedDB.open('even-reader', 1); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
+  const db = await new Promise((resolve, reject) => { const req = indexedDB.open('even-reader'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
   return new Promise((resolve, reject) => {
     const tx = db.transaction('data', action === 'damage' ? 'readwrite' : 'readonly'); const store = tx.objectStore('data'); let result = []; let changed = false;
     const request = store.openCursor();

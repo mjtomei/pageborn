@@ -53,7 +53,7 @@ const baseUrl = production ? `http://127.0.0.1:${production.address().port}` : v
 await mkdir('test-results/web-reader', { recursive: true });
 const results = [];
 try {
- for (const engine of (process.env.WEBKIT_ONLY ? [webkit] : [chromium, webkit])) {
+ for (const engine of (process.env.WEBKIT_ONLY ? [webkit] : process.env.WEB_BROWSER === 'chromium' ? [chromium] : [chromium, webkit])) {
   const browser = await engine.launch({ executablePath: engine === chromium ? '/usr/bin/google-chrome' : process.env.WEBKIT_PATH, headless: true });
   try { for (const viewport of [{ width:393,height:852 },{ width:834,height:1194 }]) {
    const page = await browser.newPage({ viewport }); const errors=[]; page.on('pageerror',e=>errors.push(e.message)); page.on('console', m => { if (m.type() === 'error') console.error('browser:', m.text().slice(0,500)); });
