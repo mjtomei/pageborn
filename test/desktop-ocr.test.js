@@ -17,8 +17,10 @@ function prepared() {
   const line = { x: 20, y: 10, width: 450, height: 30, text: 'The state is the public organization.' };
   const block = { ...line, lines: [line], kind: 'text', reflow: { fontSize: 20, lineHeight: 25, height: 25,
     text: line.text, rows: [{ text: line.text, y: 0, start: 0, end: line.text.length, sourceY: 10, items: [line] }] } };
-  return packPdfPreparation(createPdfLayout([{ number: 1, blocks: [block,
-    { x: 0, y: 50, width: 500, height: 700, kind: 'figure', text: '', lines: [] }] }]), new Map(), new Map([[1, 1.5]]));
+  const layout = createPdfLayout([{ number: 1, blocks: [block,
+    { x: 0, y: 50, width: 500, height: 700, kind: 'figure', text: '', lines: [] }] }]);
+  layout.navigation = { version: 1, sections: [] };
+  return packPdfPreparation(layout, new Map(), new Map([[1, 1.5]]));
 }
 async function fixture(t) {
   const libraryDir = await mkdtemp(path.join(tmpdir(), 'desktop-ocr-'));
@@ -66,6 +68,17 @@ test('verified desktop artifact downloads once, persists offline, and preserves 
   assert.equal(f.calls(), calls+1); assert.equal(f.writes(), 1);
   const offline = desktopPdfCache(f.local, { api: async () => { throw new Error('offline'); } }, f.name);
   assert.deepEqual(await offline.read(f.key), saved);
+});
+
+test('a phone cache from before chapter navigation receives upgraded OCR metadata once', async t => {
+  const f = await fixture(t); await f.publish();
+  const old = structuredClone(f.saved); delete old.layout.navigation; old.desktopEngine = engine;
+  await f.local.write(f.key, old);
+  const before = f.writes();
+  const remote = desktopPdfCache(f.local, f.client, f.name);
+  assert.equal((await remote.read(f.key)).layout.navigation.version, 1);
+  assert.equal(f.writes(), before + 1);
+  await remote.read(f.key); assert.equal(f.writes(), before + 1);
 });
 
 test('a preparation over 16 MiB transfers in chunks and survives a phone cache restart offline', async t => {

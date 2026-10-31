@@ -14,7 +14,8 @@ import { pdfReadingViews, nearbyPdfNote } from './pdf-notes.js';
 import { pdfNativeWindow, pdfImageEnd, PdfAutoscroll, pdfEntryLines } from './pdf-native.js';
 import { openDocumentPicker, moveDocumentPicker, LIBRARIAN_ID } from './document-picker.js';
 import { librarySort, orderedDocuments, recordDocumentOpen } from './library-order.js';
-import { openPositionPicker, movePositionPicker, togglePositionStep } from './position-picker.js';
+import { openNavigationPicker, refreshNavigationPicker, movePositionPicker, togglePositionStep } from './position-picker.js';
+import { documentContents } from './document-contents.js';
 import { Reader, autoSpeed, speedFromSlider, speedToSlider, stepAutoSpeed } from './reader.js';
 import { wordsPerMinute, wordsPerGroup, wordSpeedFromSlider, wordSpeedToSlider, stepWordSpeed, MIN_WORD_RATE, MAX_WORD_RATE } from './speed-reading.js';
 import { safeTimeout, cancelTimeout } from './timers.js';
@@ -252,12 +253,12 @@ function handleAction(action, gesture = false) {
   if (action === 'menu') { previewInput?.cancel(); reader.pause(); modePicker = null; previewMenu = previewMenu ? null : { index: 0 }; dirty = true; return; }
   if (previewMenu) {
     if (['previous', 'next', 'previous-page', 'next-page'].includes(action)) {
-      const count = appMenu(askUI?.glassesVisible).length;
+      const count = appMenu(askUI?.glassesVisible, documentContents(layout).length > 0).length;
       previewMenu.index = (previewMenu.index + (action.startsWith('next') ? 1 : -1) + count) % count;
       dirty = true; return;
     }
     if (action === 'back') { previewMenu = null; dirty = true; return; }
-    if (action === 'play') action = actionForMenu(appMenu(askUI?.glassesVisible)[previewMenu.index].itemID);
+    if (action === 'play') action = actionForMenu(appMenu(askUI?.glassesVisible, documentContents(layout).length > 0)[previewMenu.index].itemID);
     previewMenu = null; dirty = true;
   }
   if (modePicker) {
@@ -305,13 +306,16 @@ function handleAction(action, gesture = false) {
   if (action === 'position') {
     if (!layout) return;
     reader.pause(); picker = null;
-    positionPicker = positionPicker ? null : openPositionPicker(layout, reader.y);
-    if (positionPicker && reader.mode === 'speed') positionPicker = { ...positionPicker, percent: readingPercent(), max: 100 };
+    positionPicker = positionPicker ? null : openNavigationPicker(layout, reader.y);
+    if (positionPicker && positionPicker.kind !== 'contents' && reader.mode === 'speed') positionPicker = { ...positionPicker, percent: readingPercent(), max: 100 };
     updatePickerContext();
     dirty = true; return;
   }
   if (positionPicker && ['previous', 'next', 'play'].includes(action)) {
-    if (action === 'play') seekPercent(positionPicker.percent);
+    if (action === 'play') {
+      if (positionPicker.kind === 'contents') { jump(positionPicker.entries[positionPicker.index].y); renderControls(); }
+      else seekPercent(positionPicker.percent);
+    }
     else positionPicker = movePositionPicker(positionPicker, action === 'next' ? 1 : -1);
     updatePickerContext();
     dirty = true; return;
@@ -365,7 +369,7 @@ function toggleFootnotes() {
 }
 
 function updatePickerContext() {
-  if (positionPicker && reader.mode === 'speed') {
+  if (positionPicker && positionPicker.kind !== 'contents' && reader.mode === 'speed') {
     const entries = reader.speedReading.entries;
     positionPicker.y = entries[Math.round((entries.length - 1) * positionPicker.percent / 100)]?.y || 0;
   }
@@ -654,6 +658,7 @@ async function selectDocument(id, save = true) {
         } });
         const previous = layout;
         layout = views.body; pdfNotes = views.notes; pdfOpenMessage = null;
+        positionPicker = refreshNavigationPicker(positionPicker, layout);
         updatePdfReader(reader, resume ? null : previous, layout, resume || (pendingPdfPosition ? null : savedPosition), preferences.pdfEntryLines);
         if (resume) pendingPdfPosition = null;
         if (footnotesView) {
@@ -708,7 +713,7 @@ async function selectDocument(id, save = true) {
   rememberPosition(); phonePreferences?.flush();
 }
 function jumpHeading(heading) {
-  diagnostics.log('heading-jump', { index: heading.index }); jump(layout.blockY[heading.index]);
+  diagnostics.log('heading-jump', { index: heading.index }); jump(heading.y ?? layout.blockY[heading.index]);
 }
 // Headings (or PDF pages) and bookmarks as ticks on the position slider. Speed
 // read positions follow its word sequence, so ticks are hidden in that mode.
@@ -719,22 +724,26 @@ function renderLandmarks() {
     const tick = document.createElement('span'); tick.className = `landmark ${kind}`;
     tick.style.left = `calc(14px + (100% - 28px) * ${Math.min(1, Math.max(0, percent / 100))})`; box.append(tick);
   };
-  const headings = layout.headings.filter(heading => heading.level <= 2 || layout.format === 'pdf');
+  const headings = navigationHeadings().filter(heading => heading.level <= 2 || layout.format === 'pdf');
   const every = Math.max(1, Math.ceil(headings.length / 60));
-  headings.forEach((heading, i) => { if (i % every === 0) place(layout.blockY[heading.index] / layout.maxY * 100, 'heading'); });
+  headings.forEach((heading, i) => { if (i % every === 0) place((heading.y ?? layout.blockY[heading.index]) / layout.maxY * 100, 'heading'); });
   for (const mark of preferences.bookmarks[documentKey()] || []) place(restorePosition(mark) / layout.maxY * 100, 'mark');
+}
+function navigationHeadings() {
+  const entries = documentContents(layout);
+  return entries.length ? entries.map(entry => ({ ...entry, text: entry.title })) : layout?.headings || [];
 }
 function headingAt(y) {
   let found = null;
-  for (const heading of layout?.headings || []) { if (layout.blockY[heading.index] <= y + .5) found = heading; else break; }
+  for (const heading of navigationHeadings()) { if ((heading.y ?? layout.blockY[heading.index]) <= y + .5) found = heading; else break; }
   return found;
 }
 function renderOutline() {
   $('outline').replaceChildren();
   renderLandmarks();
-  if (!layout?.headings.length) return empty($('outline'), active ? 'No headings in this document. Use Search or the position slider to jump.' : 'Select a document to see its contents.');
-  for (const heading of layout.headings) {
-    const y = layout.blockY[heading.index];
+  if (!navigationHeadings().length) return empty($('outline'), active ? 'No headings in this document. Use Search or the position slider to jump.' : 'Select a document to see its contents.');
+  for (const heading of navigationHeadings()) {
+    const y = heading.y ?? layout.blockY[heading.index];
     const button = navigationButton(heading.text, `${Math.round(Math.min(1, y / (layout.maxY || 1)) * 100)}%`, () => jumpHeading(heading));
     button.style.paddingLeft = `${8 + (heading.level - 1) * 12}px`;
     $('outline').append(button);
@@ -801,12 +810,12 @@ function renderControls() {
   $('play').textContent = positionPicker ? 'Read from here' : reader.mode === 'page' ? 'Next page' : reader.playing ? 'Pause'
     : speedMode ? reader.speedReading.finished ? 'Restart' : reader.wordStop ? 'Continue' : 'Start speed reading' : 'Start autoscroll';
   $('preview').setAttribute('aria-label', picker ? `Choose document: ${picker.items[picker.index]?.title || 'No saved documents'}`
-    : positionPicker ? `Choose reading position: ${positionPicker.percent}%`
+    : positionPicker ? positionPicker.kind === 'contents' ? `Contents: ${positionPicker.entries[positionPicker.index].title}` : `Choose reading position: ${positionPicker.percent}%`
     : active ? `Glasses preview: ${active.title}` : 'Choose a document to preview it on your glasses');
   if (speedMode) $('auto-note').textContent = `Centered word groups. Titles ${reader.pauseAtTitles ? 'wait for a tap' : 'show at half speed'}; figures wait for a tap. Jumping pauses.`;
   else if (pdf && reader.mode === 'auto') $('auto-note').textContent = `After an image, text ${preferences.pdfEntryLines === 9 ? 'returns as a full screen' : `starts with ${preferences.pdfEntryLines} line${preferences.pdfEntryLines === 1 ? '' : 's'}`} (Settings). Jumping pauses.`;
   $('auto-note').hidden = reader.mode === 'page';
-  $('gesture-note').textContent = gestureHelp({ mode: reader.mode, view: picker || positionPicker ? 'picker' : 'reader', documentPicker: !!picker, positionStep: positionPicker?.step });
+  $('gesture-note').textContent = gestureHelp({ mode: reader.mode, view: picker || positionPicker ? 'picker' : 'reader', documentPicker: !!picker, positionStep: positionPicker?.step, contents: positionPicker?.kind === 'contents' });
   if (layout?.preparation?.complete === false && !reader.playing
     && (speedMode ? reader.speedReading.finished : !reader.canAutoAdvance)) {
     $('play').textContent = layout.preparation.failed ? 'Ready pages finished' : 'More pages preparing…';
@@ -900,7 +909,7 @@ function renderControls() {
     $('play').textContent = 'Use this mode'; $('play').disabled = false;
   }
   if (previewMenu) {
-    $('preview').setAttribute('aria-label', `App menu: ${appMenu(askUI?.glassesVisible)[previewMenu.index].itemName}. Swipe to choose, tap to select.`);
+    $('preview').setAttribute('aria-label', `App menu: ${appMenu(askUI?.glassesVisible, documentContents(layout).length > 0)[previewMenu.index].itemName}. Swipe to choose, tap to select.`);
     $('gesture-note').textContent = gestureHelp({ view: 'menu' });
     $('auto-note').hidden = true;
     $('play').textContent = 'Select'; $('play').disabled = false;
@@ -1553,7 +1562,7 @@ function animate(now, immediate = false) {
     frame.askMenu = !!askUI?.glassesVisible;
     if (askUI?.glassesVisible) Object.assign(frame, { message: askUI.frame(), wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
     if (modePicker) frame.modePicker = { ...modePicker };
-    if (previewMenu) Object.assign(frame, { message: { body: `Pageborne menu\n\n${appMenu(frame.askMenu).map((item, i) => `${i === previewMenu.index ? '> ' : '  '}${item.itemName}`).join('\n')}`, statusLeft: 'Swipe to choose', statusRight: 'Tap to select' }, wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
+    if (previewMenu) Object.assign(frame, { message: { body: `Pageborne menu\n\n${appMenu(frame.askMenu, documentContents(layout).length > 0).map((item, i) => `${i === previewMenu.index ? '> ' : '  '}${item.itemName}`).join('\n')}`, statusLeft: 'Swipe to choose', statusRight: 'Tap to select' }, wordFrame: null, nativePdf: null, picker: null, positionPicker: null, mode: 'page', playing: false });
     const needsBitmap = frame.layout?.format === 'pdf' && !frame.message && (!frame.wordFrame || frame.wordFrame.image) && !frame.nativePdf && !picker && !positionPicker;
     if (pdfRendering && (!needsBitmap || pdfRendering.layout !== frame.layout || pdfRendering.y !== frame.y || pdfRendering.mode !== frame.mode)) {
       pdfRendering.controller.abort(); pdfRendering = false;
@@ -1586,7 +1595,7 @@ function animate(now, immediate = false) {
     paintFrame(previewContext, frame); renderControls();
     if (!glasses.bridge && !window.flutter_inappwebview?.callHandler && !document.hidden) askUI?.acceptFrame(frame);
     if (!layout || rowAt(layout, reader.y) !== lastPassage) renderPassage();
-    const key = `${active?.id}:${Math.floor(frame.y)}:${frame.mode}:${frame.playing}:${layout?.size}:${reader.speed}:${frame.nativePdf?.reveal}:${frame.wordFrame?.start}:${frame.wordFrame?.end}:${frame.wordRate}:${frame.finished}:${frame.pauseAtTitles}:${frame.pageRemainingSeconds}:${positionPicker ? `position-${positionPicker.percent}-${positionPicker.step}` : picker?.index ?? 'reader'}:${librarySyncLabel}:${!!librarySync}:${frame.message?.body || ''}:${frame.message?.status || ''}:${frame.message?.statusCenter || ""}:${frame.message?.statusLeft || ""}:${frame.message?.statusRight || ""}:${JSON.stringify(frame.dialog || null)}:${frame.modePicker?.index ?? ''}:${!!footnotesView}:${frame.askStatus}:${frame.askUnavailable}`;
+    const key = `${active?.id}:${Math.floor(frame.y)}:${frame.mode}:${frame.playing}:${layout?.size}:${reader.speed}:${frame.nativePdf?.reveal}:${frame.wordFrame?.start}:${frame.wordFrame?.end}:${frame.wordRate}:${frame.finished}:${frame.pauseAtTitles}:${frame.pageRemainingSeconds}:${positionPicker ? `position-${positionPicker.kind}-${positionPicker.index}-${positionPicker.percent}-${positionPicker.step}-${positionPicker.entries?.length}` : picker?.index ?? 'reader'}:${librarySyncLabel}:${!!librarySync}:${frame.message?.body || ''}:${frame.message?.status || ''}:${frame.message?.statusCenter || ""}:${frame.message?.statusLeft || ""}:${frame.message?.statusRight || ""}:${JSON.stringify(frame.dialog || null)}:${frame.modePicker?.index ?? ''}:${!!footnotesView}:${frame.askStatus}:${frame.askUnavailable}`;
     const timedWords = frame.mode === 'speed' && frame.playing && frame.wordFrame && !frame.dialog && !frame.modePicker;
     if (key !== lastSentKey && (immediate || timedWords || now - lastSend >= 120)) {
       glasses.submit(frame); lastSentKey = key; lastSend = now;

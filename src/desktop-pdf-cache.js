@@ -12,7 +12,9 @@ export function desktopPdfCache(local, client, name, current = () => true) {
       if (!client || !current()) return saved;
       try {
         const result = await client.api('pageborne/library/preparation', {
-          body: { name, key, engine: saved?.desktopEngine }, timeoutMs: 1500,
+          // Older artifacts lack chapter metadata, including OCR hidden by a
+          // full-page image. Fetch the upgraded preparation once on first open.
+          body: { name, key, engine: saved?.layout.navigation?.version === 1 ? saved.desktopEngine : undefined }, timeoutMs: 1500,
         });
         if (!current()) return saved;
         if (result.state === 'ready' && result.key === key && /^[a-f0-9]{64}$/.test(result.engine)) {

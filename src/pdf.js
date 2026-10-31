@@ -24,6 +24,8 @@ import { measureNativeText } from './native-text.js';
 import { pdfPreparationKey, packPdfPreparation, unpackPdfPreparation } from './pdf-cache.js';
 import { pdfImageFrame } from './pdf-image-frame.js';
 import { associatePdfCaptions, reunitePdfFigureFragments, protectPdfCaptionedExhibits } from './pdf-captions.js';
+import { readPdfNavigation } from './document-contents.js';
+import { pdfNavigationCandidates, pdfNavigationSections } from './pdf-navigation.js';
 
 function textBoxes(content, viewport) {
   return content.items.filter(item => item.str?.trim()).map(item => {
@@ -124,12 +126,48 @@ export class PdfDocument {
     this.checkpoint('document-loaded', { pages: this.pdf.numPages });
     if (this.destroyed) throw new Error('PDF closed.');
     if (this.pdf.numPages > MAX_PDF_PAGES) throw new Error(`This PDF exceeds the ${MAX_PDF_PAGES.toLocaleString('en-US')}-page limit. Split it into smaller files.`);
+    this.navigation = await readPdfNavigation(this.pdf);
+    this.navigation.version = 1;
+    this.navigation.sections = [];
+    this.navigationCandidates = [];
+    if (this.destroyed) throw new Error('PDF closed.');
     if (restored) {
       onProgress('Restoring prepared PDF…');
       this.layout = restored.layout; this.layout.pdf = this;
+      const prior = this.layout.navigation;
+      const validPrior = prior?.version === 1 && Array.isArray(prior.sections) && prior.sections.length <= 8192
+        && prior.sections.every(e => typeof e.title === 'string' && e.title.length <= 500 && Number.isInteger(e.page)
+          && e.page > 0 && e.page <= this.pdf.numPages && Number.isFinite(e.point?.x) && Number.isFinite(e.point?.y));
+      if (validPrior) this.navigation.sections = prior.sections;
+      else if (!this.navigation.outline.length) {
+        // Old preparations retain OCR inside raster fallbacks only in the
+        // original PDF's hidden text layer. Recover navigation without rerunning
+        // OCR, rendering pages, or discarding the existing preparation.
+        for (let number = 1; number <= this.pdf.numPages; number++) {
+          if (this.destroyed) throw new Error('PDF closed.');
+          if (number % 10 === 1) onProgress(`Reading contents ${number} of ${this.pdf.numPages}…`);
+          try {
+            const page = await this.pdf.getPage(number), viewport = pdfAnalysisViewport(page);
+            this.navigationCandidates.push(...pdfNavigationCandidates({ text: textBoxes(await readPdfText(page), viewport),
+              width: viewport.width, height: viewport.height }, number));
+            page.cleanup();
+          } catch (error) { this.report('pdf-contents-page-error', error, { page: number }); }
+          if (number % 10 === 0) { await this.pdf.cleanup(); await this.yieldPreparation(); }
+        }
+        this.navigation.sections = pdfNavigationSections(this.navigationCandidates);
+      }
+      this.layout.navigation = this.navigation;
       this.marginMasks = restored.marginMasks; this.pageScales = restored.pageScales;
       this.pageTurns = new Map(this.layout.blocks.filter(block => block.turn).map(block => [block.page, block.turn]));
       this.raster = new PdfRaster(this.pdf, this.pageScales, normalizeColors, this.work);
+      if (!validPrior && cacheKey && !this.destroyed) {
+        try {
+          const saved = packPdfPreparation(this.layout, this.marginMasks, this.pageScales);
+          if (restored.desktopEngine) saved.desktopEngine = restored.desktopEngine;
+          await this.preparationCache.write(cacheKey, saved, () => !this.destroyed);
+        }
+        catch (error) { this.report('pdf-contents-cache-error', error); }
+      }
       this.checkpoint('ready', { totalBlocks: this.layout.blocks.length, cached: true });
       return this.layout;
     }
@@ -162,6 +200,17 @@ export class PdfDocument {
       onProgress(`Reading PDF text ${number} of ${this.pdf.numPages}…`);
       this.checkpoint('extracting-text', { page: number });
       textPages.push(await this.readPageText(number, reflow, onProgress));
+      if (!this.navigation.outline.length) {
+        const page = textPages.at(-1);
+        // Corrected OCR coordinates must remain in the original page space.
+        let entries = pdfNavigationCandidates(page, number);
+        if (this.pageTurns.get(number)) {
+          const original = await this.pdf.getPage(number);
+          const mapping = { sourceTransform: pdfSourceTransform(pdfAnalysisViewport(original), pdfAnalysisViewport(original, this.pageTurns.get(number))) };
+          entries = entries.map(entry => ({ ...entry, point: pdfSourcePoint(mapping, entry.point) }));
+        }
+        this.navigationCandidates.push(...entries);
+      }
       // Make a provisional prefix readable while later pages are extracted
       // or recognized; the final pass still compares the whole
       // document for recurring furniture, heading sizes and footnote styles.
@@ -305,6 +354,7 @@ export class PdfDocument {
       return block.annotationLabel ? [{ ...entry, block }, entry] : [{ ...entry, block }];
     }) : null;
     const layout = createPdfLayout(pages, { textSize, readingOrder });
+    layout.navigation = { ...this.navigation, sections: pdfNavigationSections(this.navigationCandidates) };
     layout.pdf = { draw: (y, height, inverted, options) => this.draw(y, height, inverted, { ...options, layout: options?.layout || layout }),
       drawFigure: (block, options) => this.drawFigure(block, options) };
     layout.sourcePages = pages;

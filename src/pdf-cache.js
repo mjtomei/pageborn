@@ -14,10 +14,11 @@ export async function pdfPreparationKey(bytes, options, pdfjsVersion) {
 
 export function packPdfPreparation(layout, marginMasks, pageScales) {
   if (layout.preparation?.complete === false) throw new Error('PDF preparation is still incomplete.');
-  const { blocks, headings, blockY, lineStarts, height, maxY, pages, size, annotations = [] } = layout;
+  const { blocks, headings, blockY, lineStarts, height, maxY, pages, size, annotations = [], navigation } = layout;
   return { version: PDF_PREPARATION_VERSION, marginMasks: [...marginMasks], pageScales: [...pageScales],
     layout: { blocks: blocks.map(block => ({ ...block, ...(block.reflow ? { reflow: { ...block.reflow,
-      rows: block.reflow.rows.map(({ items, ...row }) => row) } } : {}) })), headings, blockY, lineStarts, height, maxY, pages, size, annotations } };
+      rows: block.reflow.rows.map(({ items, ...row }) => row) } } : {}) })), headings, blockY, lineStarts, height, maxY, pages, size, annotations,
+      ...(navigation ? { navigation } : {}) } };
 }
 export function validatePdfPreparation(saved) {
   const layout = saved?.layout;
@@ -59,7 +60,7 @@ export function unpackPdfPreparation(saved) {
   // invalidating the prepared text, figures or OCR in the cache.
   layout.pages = [0];
   while (layout.pages.at(-1) < layout.maxY) layout.pages.push(pdfPageTurn(layout, layout.pages.at(-1), 1));
-  return { layout, marginMasks: new Map(saved.marginMasks), pageScales: new Map(saved.pageScales) };
+  return { layout, marginMasks: new Map(saved.marginMasks), pageScales: new Map(saved.pageScales), desktopEngine: saved.desktopEngine };
 }
 
 // Use the same durable SDK storage as original files on the phone; IndexedDB

@@ -29,7 +29,8 @@ export const APP_MENU = Object.freeze([
   { itemID: 10, itemName: 'Ask about this', action: 'ask' },
 ]);
 const LATEST_ITEM = Object.freeze({ itemID: 11, itemName: 'Go to latest', action: 'ask-latest' });
-export const appMenu = (ask = false) => ask ? APP_MENU.map(item => item.action === 'position' ? LATEST_ITEM : item) : APP_MENU;
+export const appMenu = (ask = false, contents = false) => APP_MENU.map(item => item.action === 'position'
+  ? ask ? LATEST_ITEM : contents ? { ...item, itemName: 'Contents' } : item : item);
 export const KEY_BINDINGS = Object.freeze({
   Space: { gesture: 'tap', label: 'Space' }, Enter: { gesture: 'tap', label: 'Enter' },
   Escape: { gesture: 'double-tap', label: 'Esc' },
@@ -62,7 +63,8 @@ export function actionForEvent(event) {
   return null;
 }
 const keyLabels = gesture => Object.values(KEY_BINDINGS).filter(b => b.gesture === gesture).map(b => b.label).join('/');
-export function gestureHelp({ mode = 'page', view = 'reader', documentPicker = false, positionStep } = {}) {
+export function gestureHelp({ mode = 'page', view = 'reader', documentPicker = false, positionStep, contents = false } = {}) {
+  if (contents) return 'Swipe to choose a section · tap to read · double tap to go back.';
   if (positionStep) return `Swipe ${positionStep}% · tap to read · double tap to go back · hold to switch to ${positionStep === 1 ? 5 : 1}%.`;
   if (view === 'transcription') return `${TRANSCRIPTION_HINT}.`;
   const swipe = view === 'reader' ? mode === 'page' ? 'Swipe to turn pages' : 'Swipe up to speed up, down to slow down' : view === 'picker' || view === 'menu' ? 'Swipe to choose' : 'Swipe to browse';

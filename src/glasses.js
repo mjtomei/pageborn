@@ -3,6 +3,7 @@ import { WIDTH, HEIGHT, BODY_TOP, BODY_HEIGHT, MARGIN, rowAt } from './document.
 import { textWindow, titleText, LINE_HEIGHT, byteLength } from './native-text.js';
 import { documentPickerText } from './document-picker.js';
 import { positionPickerText } from './position-picker.js';
+import { documentContents } from './document-contents.js';
 import { LatestFrameQueue, autoSpeed } from './reader.js';
 import { BridgeLane } from './diagnostics.js';
 import { actionForEvent, appMenu, READING_MODES } from './controls.js';
@@ -101,6 +102,7 @@ function askNotification(frame) {
 }
 function footerColumns(frame) {
   if (frameDialog(frame)) return null;
+  if (frame.positionPicker?.kind === 'contents') return actionFooter('Swipe: section', 'Tap: read · Double tap: back', ['Swipe: section']);
   if (frame.positionPicker) return actionFooter(`Swipe ${frame.positionPicker.step || 5}%`, `Hold: ${frame.positionPicker.step === 1 ? 5 : 1}% · Tap to read`, [`Swipe ${frame.positionPicker.step || 5}%`]);
   if (frame.picker) {
     const { items, syncEnabled, syncing, syncStatus } = frame.picker;
@@ -234,7 +236,7 @@ function pdfTiles(height = BODY_HEIGHT) {
   return PDF_TILES.map(tile => ({ ...tile, height: Math.max(0, Math.min(tile.height, height - tile.y)) })).filter(tile => tile.height);
 }
 function menuDefinition(content) {
-  return { menuItems: appMenu(content.askMenu ?? content.kind === 'ask').map(({ itemName, itemID }) => ({ itemName, itemID })) };
+  return { menuItems: appMenu(content.askMenu ?? content.kind === 'ask', content.contentsMenu).map(({ itemName, itemID }) => ({ itemName, itemID })) };
 }
 export function pdfPageDefinition(height = BODY_HEIGHT, content = {}) {
   const tiles = pdfTiles(height);
@@ -346,7 +348,7 @@ export class GlassesDisplay {
     this.onAccepted = onAccepted; this.onReadingAccepted = onReadingAccepted;
     this.onStatus = onStatus; this.onAction = onAction; this.onAudio = onAudio; this.diagnostics = diagnostics;
     this.lane = new BridgeLane(diagnostics);
-    this.ready = false; this.suspended = false; this.created = false; this.lastFrame = null; this.sent = {}; this.surface = 'text'; this.askMenu = false;
+    this.ready = false; this.suspended = false; this.created = false; this.lastFrame = null; this.sent = {}; this.surface = 'text'; this.askMenu = false; this.contentsMenu = false;
     window.addEventListener('flutterInAppWebViewPlatformReady', () => this.connect());
   }
   async connect() {
@@ -368,6 +370,7 @@ export class GlassesDisplay {
     const content = this.lastFrame && !this.lastFrame.bitmap ? { body: bodyText(this.lastFrame), alignments: this.lastFrame.message?.alignments, status: statusText(this.lastFrame), footer: footerTextObjects(this.lastFrame) }
       : { body: this.lastFrame?.bitmap ? 'Opening PDF…' : 'Opening your saved library…', status: 'Loading' };
     content.askMenu = this.lastFrame?.askMenu ?? this.lastFrame?.message?.kind === 'ask';
+    content.contentsMenu = documentContents(this.lastFrame?.layout).length > 0;
     await this.lane.run('setup', async () => {
       if (this.created) {
         if (!await this.bridge.rebuildPageContainer(pageDefinition(mode, content))) throw new Error('Could not rebuild the text page.');
@@ -380,7 +383,7 @@ export class GlassesDisplay {
     this.unsubscribe?.();
     this.unsubscribe = this.bridge.onEvenHubEvent(event => this.handleEvent(event));
     this.queue = new LatestFrameQueue(frame => this.lane.run(frame.bitmap && !frame.picker && !frame.positionPicker ? 'image-frame' : 'text-frame', () => this.send(frame)), error => this.fail(error));
-    this.sent = {}; this.surface = 'text'; this.askMenu = content.askMenu; this.displayMode = mode; this.acceptedFrame = null; this.readingFrame = null; this.suspended = false; this.ready = true;
+    this.sent = {}; this.surface = 'text'; this.askMenu = content.askMenu; this.contentsMenu = content.contentsMenu; this.displayMode = mode; this.acceptedFrame = null; this.readingFrame = null; this.suspended = false; this.ready = true;
     this.onStatus('Native text connected'); this.diagnostics.log('ready');
     if (this.lastFrame) this.submit(this.lastFrame);
   }
@@ -415,7 +418,8 @@ export class GlassesDisplay {
     const pdf = !!frame.bitmap && !frame.picker && !frame.positionPicker;
     const window = frame.nativePdf || (pdf ? { start: rowAt(frame.layout, frame.y), end: rowAt(frame.layout, frame.y + BODY_HEIGHT) } : textWindow(frame.layout, frame.y));
     const askMenu = frame.askMenu ?? frame.message?.kind === 'ask';
-    const content = { body: pdf ? '' : bodyText(frame), alignments: frame.message?.alignments, status: statusText(frame), footer: footerTextObjects(frame), askMenu };
+    const contentsMenu = documentContents(frame.layout).length > 0;
+    const content = { body: pdf ? '' : bodyText(frame), alignments: frame.message?.alignments, status: statusText(frame), footer: footerTextObjects(frame), askMenu, contentsMenu };
     if (this.suspended || !this.ready) return;
     const dialog = frameDialog(frame);
     const reading = !!frame.layout && !dialog && !frame.message && !frame.picker && !frame.positionPicker && !frame.modePicker && !frame.footnotes;
@@ -427,7 +431,7 @@ export class GlassesDisplay {
     const reviewControls = reviewPage ? JSON.stringify(reviewPage.textObject.map(box =>
       [box.containerName, box.xPosition, box.yPosition, box.width, box.height])) : null;
     const overlayPage = reviewPage || (frame.modePicker && modePageDefinition(content, frame.modePicker.index, pdf));
-    const rebuild = surface !== this.surface || askMenu !== this.askMenu || !!dialog && (reviewTop !== this.reviewTop || reviewControls !== this.reviewControls);
+    const rebuild = surface !== this.surface || askMenu !== this.askMenu || contentsMenu !== this.contentsMenu || !!dialog && (reviewTop !== this.reviewTop || reviewControls !== this.reviewControls);
     const updates = overlayPage ? overlayPage.textObject.filter(box => !['page-input', 'review-panel'].includes(box.containerName))
       : [...(pdf ? [] : bodyTextObjects(content)), ...content.footer];
     if (this.diagnostics.enabled) {
@@ -440,7 +444,7 @@ export class GlassesDisplay {
     // rebuild geometry, including the clipped PDF tiles underneath.
     if (rebuild) {
       if (!await this.bridge.rebuildPageContainer(overlayPage || (pdf ? pdfPageDefinition(BODY_HEIGHT, content) : pageDefinition(frame.mode, content)))) throw new Error('Could not switch the display format.');
-      this.surface = surface; this.askMenu = askMenu; this.reviewTop = reviewTop; this.reviewControls = reviewControls; this.sent = pdf ? {} : Object.fromEntries(updates.map(box => [box.containerName, box.content]));
+      this.surface = surface; this.askMenu = askMenu; this.contentsMenu = contentsMenu; this.reviewTop = reviewTop; this.reviewControls = reviewControls; this.sent = pdf ? {} : Object.fromEntries(updates.map(box => [box.containerName, box.content]));
       this.sentColors = Object.fromEntries(updates.map(box => [box.containerName, box.textColor ?? 4])); this.imageFrame = null; this.imageTiles = new Map();
       this.onStatus(pdf ? 'Images connected' : 'Native text connected');
     }

@@ -32,6 +32,7 @@ jobs:
           PAGE_TIME_BROWSER=chromium npm run test:page-time
           npm run test:pdf-centering
           npm run test:pdf-decoders
+          npm run test:contents
           npm run test:pdf-progress
           npm run test:pdf-live
           npm run test:pdf-annotations

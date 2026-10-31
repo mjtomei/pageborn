@@ -9,6 +9,7 @@ import express from 'express';
 import { chromium } from '@playwright/test';
 import { libraryManifest, librarySnapshotBytes, libraryOriginal, libraryOcrDirectory, preparationRequest } from '../../integrations/even-terminal/pageborne-library.js';
 import { PDF_DEFAULTS } from '../../src/pdf-settings.js';
+import { attachCheckpointNavigation } from './navigation.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -196,7 +197,13 @@ export async function runDaemon(configFile, { once = false, engineFactory = (con
       for (const job of jobs) {
         if (stopping) break;
         const id = digest(job.key), outputFile = path.join(prepared, id+'.json');
-        if (await json(outputFile, Infinity)) { await unlink(path.join(requests, id+'.json')).catch(() => {}); continue; }
+        const existing = await json(outputFile, Infinity);
+        if (existing) {
+          if (await attachCheckpointNavigation(existing.saved,
+            number => json(path.join(pages, job.doc.sha256, number+'.json')), () => !stopping))
+            await atomic(outputFile, existing, Infinity);
+          await unlink(path.join(requests, id+'.json')).catch(() => {}); continue;
+        }
         const failed = await json(path.join(failures, id+'.json'));
         if (failed?.retryAt > Date.now()) continue;
         if ((await readMemory()).used > .70) break;
@@ -237,6 +244,7 @@ export async function runDaemon(configFile, { once = false, engineFactory = (con
           });
           if (result.key !== job.key) throw new Error('Preparation identity mismatch');
           await libraryOriginal(original, options);
+          await attachCheckpointNavigation(result.saved, number => json(path.join(pageFolder, number+'.json')), () => !stopping);
           // Completed books are not bounded by a transport budget. Network and
           // phone storage use chunks; retain the separate small-metadata guards.
           await atomic(outputFile, { key: job.key, engine: engineId, saved: result.saved, warnings: result.warnings }, Infinity);
