@@ -6,7 +6,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { libraryManifest, libraryOcrDirectory, libraryPreparation, preparationRequest } from '../integrations/even-terminal/pageborne-library.js';
 import { PDF_DEFAULTS } from '../src/pdf-settings.js';
-import { PDF_PREPARATION_VERSION, packPdfPreparation, unpackPdfPreparation } from '../src/pdf-cache.js';
+import { PDF_PREPARATION_VERSION, packPdfPreparation, unpackPdfPreparation, PdfPreparationCache } from '../src/pdf-cache.js';
+import { CHUNK_CHARS } from '../src/phone-storage.js';
 import { createPdfLayout } from '../src/pdf-layout.js';
 import { desktopPdfCache } from '../src/desktop-pdf-cache.js';
 
@@ -65,6 +66,47 @@ test('verified desktop artifact downloads once, persists offline, and preserves 
   assert.equal(f.calls(), calls+1); assert.equal(f.writes(), 1);
   const offline = desktopPdfCache(f.local, { api: async () => { throw new Error('offline'); } }, f.name);
   assert.deepEqual(await offline.read(f.key), saved);
+});
+
+test('a preparation over 16 MiB transfers in chunks and survives a phone cache restart offline', async t => {
+  const f = await fixture(t);
+  // Large OCR text is part of the real layout, not extra transfer padding.
+  f.saved.layout.blocks[0].lines[0].text = 'Recognized book text. '.repeat(850_000);
+  await f.publish();
+  const info = await libraryPreparation(f, f.options);
+  assert.ok(info.bytes > 16*1024*1024);
+  const values = new Map();
+  const kv = { get: async key => values.get(key) || '', set: async (key, value) => { values.set(key, value); } };
+  const cache = new PdfPreparationCache(kv);
+  await cache.forDocument('old.pdf').write('old', { text: 'Evicted only after the large book commits.' });
+  let chunks = 0;
+  const client = { api: async (route, options) => {
+    const response = await f.client.api(route, options);
+    if (response.data) { chunks++; assert.ok(Buffer.from(response.data, 'base64').length <= 768*1024); }
+    return response;
+  } };
+  const received = await desktopPdfCache(cache.forDocument(f.name), client, f.name).read(f.key);
+  assert.ok(chunks > 20);
+  assert.deepEqual(received.layout, f.saved.layout);
+  assert.ok([...values].filter(([key, value]) => key.includes(':body:') && value).every(([, value]) => value.length <= CHUNK_CHARS));
+  assert.equal(await cache.forDocument('old.pdf').read('old'), null);
+  const reopened = new PdfPreparationCache(kv).forDocument(f.name);
+  const offline = await desktopPdfCache(reopened, { api: async () => { throw new Error('offline'); } }, f.name).read(f.key);
+  assert.deepEqual(offline, received);
+  assert.ok(unpackPdfPreparation(offline).layout.blocks[1].keepTogether);
+});
+
+test('prepared file changes invalidate the cached checksum before another range is served', async t => {
+  const f = await fixture(t); await f.publish();
+  const before = await libraryPreparation(f, f.options);
+  f.saved.layout.blocks[0].text = 'A changed preparation';
+  await f.publish();
+  await assert.rejects(libraryPreparation({ ...f, offset: 0, sha256: before.sha256 }, f.options), /changed/);
+  const after = await libraryPreparation(f, f.options);
+  assert.notEqual(after.sha256, before.sha256);
+  const chunk = await libraryPreparation({ ...f, offset: after.bytes - 1, sha256: after.sha256 }, f.options);
+  assert.equal(Buffer.from(chunk.data, 'base64').length, 1);
+  await assert.rejects(libraryPreparation({ ...f, offset: after.bytes, sha256: after.sha256 }, f.options), /offset/);
 });
 
 test('a changed original, formatting option, version or symlink cannot supply stale OCR', async t => {

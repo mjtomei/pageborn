@@ -1,4 +1,4 @@
-import { AtomicPhoneValue, STORAGE_PREFIX, chunksOf, descriptor, readChunks } from './phone-storage.js';
+import { AtomicPhoneValue, STORAGE_PREFIX, chunksOf, descriptor, readChunks, validateDescriptor } from './phone-storage.js';
 import { preparePdfNative } from './pdf-native.js';
 import { pdfPageTurn } from './pdf-layout.js';
 import { MAX_PDF_PAGES } from './pdf-limits.js';
@@ -19,7 +19,7 @@ export function packPdfPreparation(layout, marginMasks, pageScales) {
     layout: { blocks: blocks.map(block => ({ ...block, ...(block.reflow ? { reflow: { ...block.reflow,
       rows: block.reflow.rows.map(({ items, ...row }) => row) } } : {}) })), headings, blockY, lineStarts, height, maxY, pages, size, annotations } };
 }
-export function unpackPdfPreparation(saved) {
+export function validatePdfPreparation(saved) {
   const layout = saved?.layout;
   const positive = n => Number.isFinite(n) && n > 0;
   const positions = xs => Array.isArray(xs) && xs.every((n, i) => Number.isFinite(n) && n >= 0 && (!i || n >= xs[i - 1]));
@@ -41,13 +41,18 @@ export function unpackPdfPreparation(saved) {
         && Array.isArray(block.reflow.rows) && block.reflow.rows.every(row => typeof row.text === 'string' && Number.isFinite(row.y)))))) {
     throw new Error('Saved PDF preparation is incomplete.');
   }
-  layout.format = 'pdf'; layout.rows = [];
-  layout.annotations ||= [];
-  if (!Array.isArray(layout.annotations) || !layout.annotations.every(block => block.annotation?.kind === 'handwriting'
+  const annotations = layout.annotations ?? [];
+  if (!Array.isArray(annotations) || !annotations.every(block => block.annotation?.kind === 'handwriting'
     && positive(block.width) && positive(block.height) && positive(block.scale) && positive(block.drawHeight)
     && [block.x, block.y, block.sourceY].every(Number.isFinite) && validTurn(block) && saved.pageScales.some(([page]) => page === block.page))) {
     throw new Error('Saved PDF annotations are incomplete.');
   }
+}
+export function unpackPdfPreparation(saved) {
+  validatePdfPreparation(saved);
+  const layout = saved.layout;
+  layout.format = 'pdf'; layout.rows = [];
+  layout.annotations ||= [];
   for (let y = 0; y < layout.height; y += 27) layout.rows.push({ y, height: 27 });
   preparePdfNative(layout); // Restore derived runs, including their Infinity endpoints.
   // Page boundaries are cheap derived data: update old overlap behavior without
@@ -82,11 +87,11 @@ export function browserPdfStorage(library) {
 const PREFIX = `${STORAGE_PREFIX}:pdf-cache`;
 const JOURNAL = `${PREFIX}:pending`;
 export class PdfPreparationCache {
-  constructor(kv, { maxChars = 16 * 1024 * 1024, maxEntryChars = 8 * 1024 * 1024 } = {}) {
+  constructor(kv, { maxChars = 16 * 1024 * 1024, maxEntryChars = Infinity } = {}) {
     this.kv = kv; this.maxChars = maxChars; this.maxEntryChars = maxEntryChars;
     this.index = new AtomicPhoneValue(kv, 'pdf-cache:index'); this.tail = Promise.resolve(); this.generations = new Map();
   }
-  serialize(fn) { const task = this.tail.catch(() => {}).then(fn); this.tail = task; return task; }
+  serialize(fn) { const task = this.tail.catch(() => {}).then(fn); this.tail = task.then(() => {}, () => {}); return task; }
   async recover() {
     // Reload the committed pointer even after a failed/uncertain write.
     this.entries = (await this.index.read())?.entries || [];
@@ -94,7 +99,8 @@ export class PdfPreparationCache {
     if (!raw) return;
     const bodies = JSON.parse(raw);
     for (const body of bodies) {
-      if (!body.prefix?.startsWith(`${PREFIX}:body:`) || !Number.isInteger(body.count) || body.count < 0 || body.count > 4096) throw new Error('Invalid PDF cache journal.');
+      if (!body.prefix?.startsWith(`${PREFIX}:body:`)) throw new Error('Invalid PDF cache journal.');
+      validateDescriptor(body, { largeValue: true });
       if (this.entries.some(entry => entry.body.prefix === body.prefix)) continue;
       for (let i = 0; i < body.count; i++) await this.kv.set(`${body.prefix}:${i}`, '');
     }
@@ -108,17 +114,19 @@ export class PdfPreparationCache {
         await this.recover();
         if (!current()) return null;
         const entry = this.entries.find(entry => entry.id === id && entry.key === key);
-        return entry ? JSON.parse(await readChunks(this.kv, entry.body)) : null;
+        return entry ? JSON.parse(await readChunks(this.kv, entry.body, { largeValue: true })) : null;
       }),
       write: (key, value, alive = () => true) => this.serialize(async () => {
         await this.recover();
         if (!current() || !alive()) return false;
         const text = JSON.stringify(value);
-        if (text.length > Math.min(this.maxEntryChars, this.maxChars)) throw new Error('Prepared PDF exceeds the cache size limit.');
+        if (text.length > this.maxEntryChars) throw new Error('Prepared PDF exceeds the cache size limit.');
         const chunks = chunksOf(text);
         const body = descriptor(`${PREFIX}:body:${crypto.randomUUID()}`, text, chunks);
         let entries = this.entries.filter(entry => entry.id !== id);
-        while (entries.reduce((n, entry) => n + entry.body.length, text.length) > this.maxChars) entries.shift();
+        // The total is an eviction target, not a book-size restriction. A
+        // larger current book occupies the cache alone and still works offline.
+        while (entries.length && entries.reduce((n, entry) => n + entry.body.length, text.length) > this.maxChars) entries.shift();
         const discarded = this.entries.filter(entry => !entries.includes(entry)).map(entry => entry.body);
         await this.kv.set(JOURNAL, JSON.stringify([body, ...discarded]));
         for (let i = 0; i < chunks.length; i++) {

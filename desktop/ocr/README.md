@@ -103,7 +103,15 @@ Derived files live in the library's private `.pageborne/ocr/` directory:
 No partial layout is served by this API. Until a complete preparation is ready,
 the phone uses its existing progressive OCR. Complete downloads are validated and
 cached; an unavailable desktop, corrupt response or changed document falls back
-to local reading. Prepared artifacts are limited to 16 MiB.
+to local reading. Completed preparations have no fixed file-size or transfer
+cap. The server serves bounded chunks, reusing a checksum only while the file
+is unchanged. The phone's cache budget evicts older preparations; a book larger
+than that budget is kept on its own. Available storage and browser memory still
+determine whether a particular device can open and retain a large preparation.
+
+An intentional OCR worker shutdown after a document error does not poison the
+next job. Unexpected model exits and inference timeouts still stop the service
+for inspection rather than repeatedly restarting CUDA.
 
 ## Tests
 

@@ -19,19 +19,19 @@ async function directory(folder) {
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(folder) !== folder) throw new Error('Unsafe OCR directory');
   return folder;
 }
-async function json(file) {
+async function json(file, maxBytes = 16*1024*1024) {
   let handle;
   try {
     handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16*1024*1024) throw new Error('Invalid OCR artifact');
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes) throw new Error('Invalid OCR artifact');
     return JSON.parse(await handle.readFile('utf8'));
   } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   finally { await handle?.close(); }
 }
-async function atomic(file, value) {
+async function atomic(file, value, maxBytes = 16*1024*1024) {
   const serialized = JSON.stringify(value);
-  if (Buffer.byteLength(serialized) > 16*1024*1024) throw new Error('OCR artifact exceeds the transfer limit');
+  if (Buffer.byteLength(serialized) > maxBytes) throw new Error('OCR metadata exceeds its size limit');
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     const handle = await open(temporary, 'wx', 0o600);
@@ -49,21 +49,25 @@ export async function memoryState() {
   return { used: 1-info.MemAvailable/info.MemTotal, free: info.MemFree, total: info.MemTotal };
 }
 
-class Engine {
-  constructor(config, configFile) { this.config = config; this.configFile = configFile; this.pending = []; }
+export class Engine {
+  constructor(config, configFile, { spawnProcess = spawn, startupTimeoutMs = 90_000, inferenceTimeoutMs = 360_000 } = {}) {
+    this.config = config; this.configFile = configFile; this.pending = [];
+    this.spawnProcess = spawnProcess; this.startupTimeoutMs = startupTimeoutMs; this.inferenceTimeoutMs = inferenceTimeoutMs;
+  }
   async start() {
     if (this.failed) throw this.failed;
     if (this.child) return this.ready;
     this.ready = new Promise((resolve, reject) => this.pending.push({ resolve, reject }));
-    const child = this.child = spawn(this.config.python, [path.join(here, 'guard.py'),
+    const child = this.child = this.spawnProcess(this.config.python, [path.join(here, 'guard.py'),
       '--samples', path.join(this.config.telemetryDir, `memory-${Date.now()}.jsonl`), '--', this.config.python,
       path.join(here, 'engine.py'), this.configFile], { stdio: ['pipe', 'pipe', 'inherit'] });
     const failure = error => {
-      if (this.child !== child) return;
+      if (this.child !== child || this.stoppingChild === child || this.failed) return;
       this.failed = error;
       for (const item of this.pending.splice(0)) item.reject(error);
       child.kill('SIGTERM');
     };
+    this.fail = failure;
     child.on('error', failure);
     child.stdin.on('error', failure);
     child.on('exit', code => {
@@ -74,7 +78,7 @@ class Engine {
       try { const value = JSON.parse(line); this.pending.shift()?.resolve(value); }
       catch (error) { failure(error); }
     });
-    const timer = setTimeout(() => failure(new Error('OCR model startup timed out')), 90_000);
+    const timer = setTimeout(() => failure(new Error('OCR model startup timed out')), this.startupTimeoutMs);
     try {
       const ready = await this.ready;
       if (ready.ready !== true) { failure(new Error('Invalid OCR startup response')); throw this.failed; }
@@ -85,7 +89,8 @@ class Engine {
     await this.start();
     const response = new Promise((resolve, reject) => this.pending.push({ resolve, reject }));
     this.child.stdin.write(JSON.stringify({ items })+'\n');
-    const timer = setTimeout(() => void this.stop(), 360_000);
+    const fail = this.fail;
+    const timer = setTimeout(() => fail(new Error('OCR batch timed out; restart required')), this.inferenceTimeoutMs);
     try {
       const result = await response;
       if (!Array.isArray(result.items) || result.items.length !== items.length
@@ -101,6 +106,8 @@ class Engine {
   async stop() {
     const child = this.child; if (!child) return;
     const exited = new Promise(resolve => child.once('close', resolve));
+    this.stoppingChild = child;
+    for (const item of this.pending.splice(0)) item.reject(this.failed || new Error('OCR engine stopped intentionally'));
     child.kill('SIGTERM'); await exited;
   }
 }
@@ -189,7 +196,7 @@ export async function runDaemon(configFile, { once = false, engineFactory = (con
       for (const job of jobs) {
         if (stopping) break;
         const id = digest(job.key), outputFile = path.join(prepared, id+'.json');
-        if (await json(outputFile)) { await unlink(path.join(requests, id+'.json')).catch(() => {}); continue; }
+        if (await json(outputFile, Infinity)) { await unlink(path.join(requests, id+'.json')).catch(() => {}); continue; }
         const failed = await json(path.join(failures, id+'.json'));
         if (failed?.retryAt > Date.now()) continue;
         if ((await readMemory()).used > .70) break;
@@ -230,7 +237,9 @@ export async function runDaemon(configFile, { once = false, engineFactory = (con
           });
           if (result.key !== job.key) throw new Error('Preparation identity mismatch');
           await libraryOriginal(original, options);
-          await atomic(outputFile, { key: job.key, engine: engineId, saved: result.saved, warnings: result.warnings });
+          // Completed books are not bounded by a transport budget. Network and
+          // phone storage use chunks; retain the separate small-metadata guards.
+          await atomic(outputFile, { key: job.key, engine: engineId, saved: result.saved, warnings: result.warnings }, Infinity);
           await unlink(path.join(requests, id+'.json')).catch(() => {});
           await unlink(path.join(failures, id+'.json')).catch(() => {});
           await saveState({ phase: 'ready', document: job.name });

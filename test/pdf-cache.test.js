@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PdfPreparationCache, pdfPreparationKey, packPdfPreparation, unpackPdfPreparation } from '../src/pdf-cache.js';
+import { PdfPreparationCache, pdfPreparationKey, packPdfPreparation, unpackPdfPreparation, validatePdfPreparation } from '../src/pdf-cache.js';
 import { createPdfLayout, pdfAnchor, restorePdfAnchor } from '../src/pdf-layout.js';
 import { pdfNativeWindow } from '../src/pdf-native.js';
 import { CHUNK_CHARS, STORAGE_PREFIX } from '../src/phone-storage.js';
@@ -34,6 +34,9 @@ test('saved geometry keeps native pages, figures and exact source anchors throug
   const masks = new Map([[1, [{ x: 2, y: 3, width: 30, height: 10 }]]]); const scales = new Map([[1, 1.5], [2, 1.5]]);
   const encoded = JSON.stringify(packPdfPreparation(layout, masks, scales));
   assert.doesNotMatch(encoded, /items|sourcePages|circular/);
+  const checked = JSON.parse(encoded);
+  validatePdfPreparation(checked);
+  assert.equal(JSON.stringify(checked), encoded, 'validation does not mutate or expand the saved layout');
   const restored = unpackPdfPreparation(JSON.parse(encoded));
   assert.deepEqual(restored.marginMasks, masks); assert.deepEqual(restored.pageScales, scales);
   assert.deepEqual(restored.layout.pages, layout.pages);
@@ -54,6 +57,22 @@ test('saved geometry keeps native pages, figures and exact source anchors throug
   assert.ok(unpackPdfPreparation(longBook).layout.blocks.some(block => block.page === 450));
   longBook.pageScales.push([1001, 1]);
   assert.throws(() => unpackPdfPreparation(longBook), /incomplete/);
+});
+
+test('cache budget permits one larger book and restores prior data after an interrupted replacement', async () => {
+  const kv = memoryPhone(); const cache = new PdfPreparationCache(kv, { maxChars: 100 });
+  await cache.forDocument('old').write('key', { text: 'Older preparation' });
+  kv.failure = (key, value) => value && key.includes(':body:') && key.endsWith(':1');
+  await assert.rejects(cache.forDocument('large').write('key', payload), /Storage write failed/);
+  kv.failure = null;
+  assert.deepEqual(await new PdfPreparationCache(kv).forDocument('old').read('key'), { text: 'Older preparation' });
+  await cache.forDocument('large').write('key', payload);
+  const fresh = new PdfPreparationCache(kv, { maxChars: 100 });
+  assert.deepEqual(await fresh.forDocument('large').read('key'), payload);
+  assert.equal(await fresh.forDocument('old').read('key'), null);
+  await fresh.forDocument('small').write('key', { text: 'Small' });
+  assert.equal(await fresh.forDocument('large').read('key'), null);
+  assert.equal(bodyValues(kv).length, 1);
 });
 
 test('preparation survives SDK-only restart, uses bounded chunks and replaces the same document', async () => {

@@ -1,4 +1,4 @@
-import { unpackPdfPreparation } from './pdf-cache.js';
+import { validatePdfPreparation } from './pdf-cache.js';
 import { base64ToBytes } from './binary.js';
 
 // Probe once per open. A missing/old/offline desktop never blocks local OCR,
@@ -7,7 +7,7 @@ export function desktopPdfCache(local, client, name, current = () => true) {
   return {
     async read(key) {
       let saved;
-      try { saved = await local.read(key); if (saved) unpackPdfPreparation(structuredClone(saved)); }
+      try { saved = await local.read(key); if (saved) validatePdfPreparation(saved); }
       catch { saved = null; }
       if (!client || !current()) return saved;
       try {
@@ -17,7 +17,7 @@ export function desktopPdfCache(local, client, name, current = () => true) {
         if (!current()) return saved;
         if (result.state === 'ready' && result.key === key && /^[a-f0-9]{64}$/.test(result.engine)) {
           if (result.unchanged && saved?.desktopEngine === result.engine) return saved;
-          if (!Number.isSafeInteger(result.bytes) || result.bytes <= 0 || result.bytes > 16*1024*1024
+          if (!Number.isSafeInteger(result.bytes) || result.bytes <= 0
             || !/^[a-f0-9]{64}$/.test(result.sha256)) return saved;
           const bytes = new Uint8Array(result.bytes);
           for (let offset = 0; offset < bytes.length;) {
@@ -36,7 +36,7 @@ export function desktopPdfCache(local, client, name, current = () => true) {
           if (downloaded.key !== key || downloaded.engine !== result.engine) return saved;
           // Validate before replacing a usable phone result or writing storage.
           const artifact = downloaded.saved;
-          unpackPdfPreparation(structuredClone(artifact));
+          validatePdfPreparation(artifact);
           artifact.desktopEngine = result.engine;
           try { await local.write(key, artifact, current); } catch { /* Still usable if phone storage is full. */ }
           return artifact;

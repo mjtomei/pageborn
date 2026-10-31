@@ -19,14 +19,16 @@ export function chunksOf(text) {
   return chunks;
 }
 export function descriptor(prefix, text, chunks) { return { prefix, count: chunks.length, length: text.length, checksum: checksum(text) }; }
-function validateDescriptor(value) {
+export function validateDescriptor(value, { largeValue = false } = {}) {
   if (!value || typeof value.prefix !== 'string' || !value.prefix.startsWith(STORAGE_PREFIX + ':')
-    || !Number.isInteger(value.count) || value.count < 0 || value.count > 4096
-    || !Number.isInteger(value.length) || value.length < 0 || value.length > 128 * 1024 * 1024
+    || !Number.isSafeInteger(value.count) || value.count < 0 || (!largeValue && value.count > 4096)
+    || !Number.isSafeInteger(value.length) || value.length < 0 || (!largeValue && value.length > 128 * 1024 * 1024)
+    || (largeValue && (value.count < Math.ceil(value.length / CHUNK_CHARS)
+      || value.count > Math.ceil(value.length / (CHUNK_CHARS - 1))))
     || typeof value.checksum !== 'string') throw new Error('Saved phone data is invalid. No files were changed.');
 }
-export async function readChunks(kv, ref, { signal } = {}) {
-  validateDescriptor(ref);
+export async function readChunks(kv, ref, { signal, largeValue = false } = {}) {
+  validateDescriptor(ref, { largeValue });
   const chunks = [];
   for (let i = 0; i < ref.count; i++) { signal?.throwIfAborted(); chunks.push(await kv.get(`${ref.prefix}:${i}`)); }
   signal?.throwIfAborted();
