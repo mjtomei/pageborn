@@ -84,11 +84,22 @@ def correct(extracted, markdown):
             if len(paragraph_ids) >= len(line['words']) * .65 and len(set(paragraph_ids)) == 1:
                 line.setdefault('ocrParagraph', line.get('paragraph'))
                 line['paragraph'] = paragraph_ids[0]
+                line['desktopParagraph'] = paragraph_ids[0]
     if result.get('layoutFromOcr'): result['layoutText'] = result['text']
     # A connected underline can stretch all word boxes upward into the prior
     # row. Keep their bottom edge, and use neighboring print's typical height
     # only when the two measured rows overlap. No model-created coordinates.
     lines = result['text']
+    # A damaged row may not align well enough to inherit a paragraph directly.
+    # If both immediately adjacent rows agree, keep that row in their paragraph
+    # rather than mixing a Tesseract paragraph ID with Xiaomi's numbering.
+    for i, line in enumerate(lines[1:-1], 1):
+        previous, following = lines[i-1], lines[i+1]
+        if ('desktopParagraph' not in line and 'desktopParagraph' in previous
+                and previous['desktopParagraph'] == following.get('desktopParagraph')
+                and len(line['text'].split()) >= 4):
+            line.setdefault('ocrParagraph', line.get('paragraph'))
+            line['paragraph'] = previous['desktopParagraph']
     heights = [l['height'] for l in lines if len(l['text']) >= 30
                and l['width'] > result.get('width', 900) * .35 and 6 <= l['height'] <= 45]
     if len(heights) >= 6:

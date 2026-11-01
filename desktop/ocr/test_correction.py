@@ -58,6 +58,15 @@ class CorrectionTests(unittest.TestCase):
         self.assertEqual({line['paragraph'] for line in result['text']}, {0})
         self.assertEqual(lines[4]['y'], 190)
 
+    def test_partially_aligned_middle_row_does_not_split_a_hyphenated_word(self):
+        texts = ['The public state is involved in making social arrange-',
+                 'ments The passing lass and more confer-',
+                 'xing a franchise still acts through concrete persons.']
+        lines = [page(text)['text'][0] for text in texts]
+        for i, line in enumerate(lines): line['paragraph'] = i+7
+        result = correct({'text': lines}, 'The public state is involved in making social arrangements like passing laws and more conferring a franchise still acts through concrete persons.')
+        self.assertEqual({line['paragraph'] for line in result['text']}, {0})
+
     def test_memory_guard_precedes_eighty_percent_and_keeps_physical_headroom(self):
         self.assertFalse(pressure({'used_fraction': .70, 'free_bytes': 25*1024**3}))
         self.assertTrue(pressure({'used_fraction': .77, 'free_bytes': 25*1024**3}))
