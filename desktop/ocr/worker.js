@@ -6,11 +6,14 @@ import { base64ToBytes } from '../../src/binary.js';
 import { renderPdfPage } from '../../src/pdf-render.js';
 
 window.desktopPdfInfo = { version, preparationVersion: PDF_PREPARATION_VERSION };
-window.prepareDesktopPdf = async ({ content, settings, batchSize }) => {
+window.prepareDesktopPdf = async ({ content, settings, batchSize = 1, checkpointOnly = false }) => {
   const reader = new PdfDocument();
   const originalRead = reader.readPageText.bind(reader);
   const ready = new Map();
   reader.readPageText = async (number, reflow, progress) => {
+    // An explicit layout-only replay must never silently fall through to OCR.
+    // Existing Roman hints remain available; no new recognition is scheduled.
+    if (checkpointOnly) reader.ocr.recognizeRomanHeading = async () => null;
     if (ready.has(number)) { const page = ready.get(number); ready.delete(number); return page; }
     const pending = [];
     for (let n = number; n <= Math.min(reader.pdf.numPages, number + batchSize - 1); n++) {
@@ -20,6 +23,7 @@ window.prepareDesktopPdf = async ({ content, settings, batchSize }) => {
         if (cached.turn) reader.pageTurns.set(n, cached.turn);
         ready.set(n, cached.extracted); continue;
       }
+      if (checkpointOnly) throw new Error(`Missing OCR checkpoint for page ${n}; no recognition was started.`);
       const extracted = await originalRead(n, reflow, progress);
       if (reader.ocrFailed) throw new Error('Desktop geometry OCR failed; preparation will retry.');
       const turn = reader.pageTurns.get(n) || 0;

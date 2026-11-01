@@ -12,10 +12,18 @@ gallery and whole-image handling as the glasses reader. Digital PDFs with usable
 text keep their embedded text. For scans, Tesseract provides word geometry and
 Xiaomi provides a second transcription, using its upstream prompt. A conservative
 alignment pass transfers supported word and capitalization corrections onto that
-geometry. Unaligned words, tables and figures are preserved. This is not yet a
+geometry. Agreement also contributes to the layout acceptance score, while the
+original OCR confidence is retained separately. Matching paragraph boundaries
+and overlapping underline-damaged text boxes are repaired before reflow.
+Unaligned words, tables and figures are preserved. This is not yet a
 complete replacement of Tesseract with Xiaomi: missing words without reliable
 geometry can remain missing, and ambiguous pages can still fall back to an image.
 Raw Xiaomi output is saved with each page for inspection and future improvements.
+The worker supports `checkpointOnly: true` for CPU-only layout regression and
+rebuilds. It fails on any missing checkpoint instead of starting recognition;
+the desktop browser test exercises both replay and this failure path. Old
+recognition must be explicitly selected and checked against the source PDF and
+model configuration when migrating between cache namespaces.
 
 ## Setup
 

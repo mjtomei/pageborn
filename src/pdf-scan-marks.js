@@ -91,8 +91,9 @@ export function pdfScanMarks({ width, height, data, text }) {
     const nearProse = rows.some(row => row !== current && row.confidence >= 65 && row.height >= size * .6
       && (row.text.match(/\p{L}/gu) || []).length >= 4 && Math.abs(bottom(row) - current.y) < size * 1.2
       && Math.min(right(row), right(current)) - Math.max(row.x, current.x) > current.width * .7);
-    const stroke = current.confidence < 55 && letters <= 4
+    const stroke = current.confidence < 55 && (letters <= 4
       && (/(?:^|\s)[—–_=\-]+(?:\s|$)/u.test(current.text) || letters <= 1 && /[—–_=\-]+/u.test(current.text))
+        || current.desktopUnmatched && current.confidence < 25 && letters <= 12)
       && !current.noteMarker && !current.words?.some(word => word.references?.length) && nearProse
       && components(data, width, height, current).some(box => box.width >= Math.max(20, size * .8, current.width * .7)
         // A wavy underline may touch a page number or descend several pixels;
@@ -101,6 +102,22 @@ export function pdfScanMarks({ width, height, data, text }) {
     if (!stroke) clean.push(current);
   }
   return { text: clean, annotations, masks: annotations.map(({ x, y, width, height }) => ({ x, y, width, height })) };
+}
+
+// A separated footnote rule or the tail of an underline can share a crop
+// with a binding shadow. Discard it only if every interior component is a
+// thin horizontal stroke beside recognized text. Diagrams/letters survive.
+export function pdfScanRuleFragment(block, { width, height, data, text }) {
+  if (block.kind !== 'scan' || block.fullPage || block.text.trim() || block.lines.length) return false;
+  const pieces = components(data, width, height, block).filter(box => box.x >= 20 && right(box) <= width - 20
+    && !(box.width <= 5 && bottom(box) >= height - 2 && (box.x < 30 || right(box) > width - 30)));
+  if (!pieces.length) return false;
+  if (!pieces.some(box => box.width >= 40)) return false;
+  return pieces.every(box => text.some(line => line.confidence >= 70 && line.text.length >= 20
+    && line.height < 45
+    && box.height <= line.height * .9 && box.count / box.width <= line.height * .22
+    && Math.min(right(line), right(box)) - Math.max(line.x, box.x) >= box.width * .7
+    && (Math.abs(box.y - bottom(line)) < line.height * 1.5 || Math.abs(bottom(box) - line.y) < line.height * 2)));
 }
 
 export function pdfUnderlineBlock(block, text) {

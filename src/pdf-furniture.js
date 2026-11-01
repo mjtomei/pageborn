@@ -4,6 +4,14 @@ import { pdfTextRows } from './pdf-reflow.js';
 const bottom = box => box.y + box.height;
 const signature = text => text.toLocaleLowerCase().replace(/[\u0000-\u001f]/g, '')
   .replace(/\d+/g, '#').replace(/[^\p{L}#]/gu, '');
+const similarSideMark = (a, b) => {
+  a = signature(a); b = signature(b);
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 30) return false;
+  const pairs = value => new Set(Array.from({ length: value.length - 1 }, (_, i) => value.slice(i, i + 2)));
+  const left = pairs(a), right = pairs(b);
+  return [...left].filter(pair => right.has(pair)).length * 2 / (left.size + right.size) >= .65;
+};
 
 function edgeRows(page) {
   const rows = [];
@@ -113,11 +121,15 @@ export function repeatedPdfTextMasks(pages) {
   // letters/rule behind can create dozens of spurious image fragments.
   const sideMarks = pages.map(page => page.text.filter(box => box.height > box.width * 3
     && box.width < page.width * .04 && (box.x + box.width < page.width * .12 || box.x > page.width * .88)
-    && /^(?:author|accepted)\s+manuscript$/i.test(box.text.trim())));
+    && (/^(?:author|accepted)\s+manuscript$/i.test(box.text.trim())
+      || box.height > page.height * .2 && box.text.length >= 40
+        && (box.x + box.width < page.width * .05 || box.x > page.width * .95))));
   for (const [index, marks] of sideMarks.entries()) for (const mark of marks) {
     const page = pages[index];
-    if (sideMarks.filter((others, n) => others.some(other => signature(other.text) === signature(mark.text)
-      && Math.abs(other.x / pages[n].width - mark.x / page.width) < .015)).length < minimum) continue;
+    if (sideMarks.filter((others, n) => others.some(other => similarSideMark(other.text, mark.text)
+      && Math.abs(other.x / pages[n].width - mark.x / page.width) < .015
+      && Math.abs(other.y / pages[n].height - mark.y / page.height) < .035
+      && Math.abs(other.height / pages[n].height - mark.height / page.height) < .035)).length < minimum) continue;
     const pad = Math.min(12, mark.width * .5);
     const x = Math.max(0, mark.x - pad), right = Math.min(page.width, mark.x + mark.width + pad);
     // Protect any other source text entering the lane, even on a cover page.

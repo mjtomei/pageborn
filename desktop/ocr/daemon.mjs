@@ -10,6 +10,7 @@ import { chromium } from '@playwright/test';
 import { libraryManifest, librarySnapshotBytes, libraryOriginal, libraryOcrDirectory, preparationRequest } from '../../integrations/even-terminal/pageborne-library.js';
 import { PDF_DEFAULTS } from '../../src/pdf-settings.js';
 import { attachCheckpointNavigation } from './navigation.mjs';
+import { ocrEngineIdentity } from './identity.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -113,7 +114,8 @@ export class Engine {
   }
 }
 
-export async function runDaemon(configFile, { once = false, engineFactory = (config, file) => new Engine(config, file), readMemory = memoryState } = {}) {
+export async function runDaemon(configFile, { once = false, engineFactory = (config, file) => new Engine(config, file), readMemory = memoryState,
+  dist = path.resolve(here, '../../dist-ocr') } = {}) {
   const config = await json(configFile);
   if (!config?.python || !config?.modelPath || !/^[a-f0-9]{64}$/.test(config.weightsSha256 || '')) throw new Error('Set python, modelPath and weightsSha256 in the private OCR config');
   // Larger groups regressed throughput and were implicated in GB10 freezes.
@@ -129,14 +131,7 @@ export async function runDaemon(configFile, { once = false, engineFactory = (con
   const file = await open(path.join(config.modelPath, 'model.safetensors'), 'r');
   try { for await (const chunk of file.createReadStream()) weights.update(chunk); } finally { await file.close().catch(() => {}); }
   if (weights.digest('hex') !== config.weightsSha256) throw new Error('Xiaomi checkpoint checksum mismatch');
-  const dist = path.resolve(here, '../../dist-ocr');
-  const signature = createHash('sha256').update(config.weightsSha256);
-  for (const name of ['engine.py', 'correction.py', 'worker.js', 'requirements.txt']) signature.update(await readFile(path.join(here, name)));
-  for (const name of (await readdir(config.modelPath)).filter(name => name.endsWith('.json')).sort()) {
-    signature.update(name).update(await readFile(path.join(config.modelPath, name)));
-  }
-  for (const name of (await readdir(path.join(dist, 'assets'))).sort()) signature.update(await readFile(path.join(dist, 'assets', name)));
-  const engineId = signature.digest('hex');
+  const engineId = await ocrEngineIdentity(config, dist);
   const folder = await directory(path.join(root, engineId));
   const prepared = await directory(path.join(folder, 'prepared'));
   const pages = await directory(path.join(folder, 'pages'));

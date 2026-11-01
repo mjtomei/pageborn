@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pdfScanMarks, pdfUnderlineBlock } from '../src/pdf-scan-marks.js';
+import { pdfScanMarks, pdfUnderlineBlock, pdfScanRuleFragment } from '../src/pdf-scan-marks.js';
 import { createPdfLayout } from '../src/pdf-layout.js';
 import { pdfAnnotationItems, pdfGalleryItems } from '../src/pdf-captions.js';
 import { packPdfPreparation, unpackPdfPreparation } from '../src/pdf-cache.js';
@@ -87,4 +87,29 @@ test('annotation gallery is separate from reading/figures and survives preparati
   assert.deepEqual(pdfAnnotationItems(restored), pdfAnnotationItems(layout));
   saved.layout.annotations[0].width = NaN;
   assert.throws(() => unpackPdfPreparation(saved), /annotations are incomplete/);
+});
+
+test('a detached footnote separator and broken underline tail are furniture, not page images', () => {
+  const p = fixture(); p.data.fill(255);
+  const block = { x: 80, y: 124, width: 510, height: 80, kind: 'scan', lines: [], text: '' };
+  p.rect(100, 125, 150, 3); p.rect(290, 125, 12, 1);
+  assert.equal(pdfScanRuleFragment(block, p), true);
+  p.rect(350, 150, 20, 20);
+  assert.equal(pdfScanRuleFragment(block, p), false, 'interior artwork is retained');
+  p.data.fill(255); p.rect(100, 126, 150, 3);
+  assert.equal(pdfScanRuleFragment({ ...block, kind: 'figure' }, p), false);
+  assert.equal(pdfScanRuleFragment({ ...block, fullPage: true }, p), false);
+  assert.equal(pdfScanRuleFragment({ ...block, text: 'A note' }, p), false);
+  assert.equal(pdfScanRuleFragment(block, { ...p, text: [] }), false);
+});
+
+test('alphabetic OCR of an underline requires independent absence AND thin-stroke pixels', () => {
+  const p = fixture(); p.rect(100, 122, 160, 2);
+  const artifact = { x: 100, y: 122, width: 160, height: 15, text: 'Be easn TN', confidence: 3, desktopUnmatched: true };
+  p.text.push(artifact);
+  assert.ok(!pdfScanMarks(p).text.includes(artifact));
+  delete artifact.desktopUnmatched;
+  assert.ok(pdfScanMarks(p).text.includes(artifact));
+  artifact.desktopUnmatched = true; p.rect(180, 122, 40, 15);
+  assert.ok(pdfScanMarks(p).text.includes(artifact), 'an omitted real printed passage is protected');
 });

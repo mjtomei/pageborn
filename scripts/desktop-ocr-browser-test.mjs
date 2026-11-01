@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { mkdtemp, writeFile, readFile, rm, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import express from 'express';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { scannedPdfFixture } from '../test/fixtures/pdfs.mjs';
@@ -42,6 +43,7 @@ try {
   await writeFile(path.join(modelPath, 'model.safetensors'), 'fixture');
   const config = path.join(root, 'ocr.json');
   await writeFile(config, JSON.stringify({ libraryDir, modelPath, python: '/unused', weightsSha256: hash('fixture'), batchSize: 1, chromePath }));
+  const dist = path.resolve(process.env.OCR_TEST_DIST || 'dist-ocr');
   const calls = [];
   // CPU-only fixture can run on small CI workers; no real inference process
   // is created. Production always reads the real /proc/meminfo values.
@@ -54,7 +56,7 @@ try {
         markdown: 'Fixture model output; not a live quality evaluation.' })) };
     }, async stop() {},
   });
-  await runDaemon(config, { once: true, engineFactory, readMemory });
+  await runDaemon(config, { once: true, engineFactory, readMemory, dist });
   assert.deepEqual(calls, [1, 2]);
   const ocr = await libraryOcrDirectory({ libraryDir });
   const state = JSON.parse(await readFile(path.join(ocr, 'daemon.json')));
@@ -64,11 +66,29 @@ try {
   assert.deepEqual(await readdir(pageFolder), ['1.json']);
   assert.deepEqual(await readdir(path.join(engineFolder, 'prepared')), []);
   for (const failure of await readdir(path.join(engineFolder, 'failures'))) await rm(path.join(engineFolder, 'failures', failure));
-  await runDaemon(config, { once: true, engineFactory, readMemory });
+  await runDaemon(config, { once: true, engineFactory, readMemory, dist });
   assert.deepEqual(calls, [1, 2, 2, 3], 'restart reuses page 1 and retries only unfinished pages');
   const artifacts = await readdir(path.join(engineFolder, 'prepared')); assert.equal(artifacts.length, 1);
   const artifact = JSON.parse(await readFile(path.join(engineFolder, 'prepared', artifacts[0])));
   await writeFile(path.join(out, 'preparation.json'), JSON.stringify(artifact));
+  // Explicit checkpoint replay cannot start either geometry OCR or inference.
+  const server = express().use(express.static(dist)).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  browser = await chromium.launch({ headless: true, ...(chromePath ? { executablePath: chromePath } : {}), args: ['--disable-gpu'] });
+  try {
+    const replay = await browser.newPage(); let missing = false, inferred = 0;
+    await replay.exposeFunction('desktopProgress', async () => {});
+    await replay.exposeFunction('desktopPageRead', async number => missing ? null : JSON.parse(await readFile(path.join(pageFolder, number+'.json'))));
+    await replay.exposeFunction('desktopPageBatch', async () => { inferred++; throw new Error('Inference forbidden'); });
+    await replay.goto(`http://127.0.0.1:${server.address().port}`);
+    await replay.waitForFunction(() => window.prepareDesktopPdf);
+    const args = { content: original.toString('base64'), settings: JSON.parse(artifact.key)[3], checkpointOnly: true };
+    const rebuilt = await replay.evaluate(args => window.prepareDesktopPdf(args), args);
+    assert.deepEqual(rebuilt.saved.layout.blocks, artifact.saved.layout.blocks);
+    missing = true;
+    await assert.rejects(replay.evaluate(args => window.prepareDesktopPdf(args), args), /Missing OCR checkpoint for page 1/);
+    assert.equal(inferred, 0);
+  } finally { await browser.close(); browser = null; await new Promise(resolve => server.close(resolve)); }
   let saved;
   const phone = desktopPdfCache({ read: async () => saved, write: async (_, value) => { saved = value; } },
     { api: (_, { body }) => libraryPreparation(body, { libraryDir }) }, 'scan.pdf');
@@ -77,7 +97,7 @@ try {
   assert.ok(layout.blocks.some(b => b.reflow?.text.includes('public')));
   assert.equal(new Set(layout.blocks.map(b => b.page)).size, 3);
   assert.equal(hash(await readFile(path.join(libraryDir, 'scan.pdf'))), hash(original));
-  await runDaemon(config, { once: true, engineFactory, readMemory });
+  await runDaemon(config, { once: true, engineFactory, readMemory, dist });
   assert.equal(calls.length, 4, 'completed document is skipped on daemon restart');
   await writeFile(path.join(out, 'result.json'), JSON.stringify({ passed: true, inference: 'fixture; no GPU',
     calls, pages: 3, sourceUnchanged: true, checkpointResume: true, phoneCacheRoundTrip: true }, null, 2));

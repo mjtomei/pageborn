@@ -160,3 +160,16 @@ test('pale paper stains are omitted from textless crops while continuous faint m
   for (let x = 300; x < 340; x++) page.data.fill(202, (700 * 600 + x) * 4, (700 * 600 + x) * 4 + 3);
   assert.equal(pdfBlankScan({ ...page, bounds }), false);
 });
+
+test('a centered section number can reflow beside binding shadow, but interior ink is still required to match', () => {
+  const page = scan(); page.data.fill(255);
+  const ink = (x,y,w,h) => { for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++) page.data.fill(0, (yy*page.width+xx)*4, (yy*page.width+xx)*4+3); };
+  const line = { x: 290, y: 300, width: 12, height: 20, text: '5', confidence: 95 };
+  const block = { x: 0, y: 298, width: 310, height: 26, kind: 'text', text: '5', lines: [line] };
+  ink(290,300,12,20); ink(0,298,15,26);
+  const options = { pixels: page.data, pageWidth: page.width, allowSparseUncertainty: true };
+  assert.ok(reflowPdfBlock(block, options));
+  assert.equal(reflowPdfBlock(block, { ...options, allowSparseUncertainty: false }), null);
+  ink(120,300,80,20);
+  assert.equal(reflowPdfBlock(block, options), null);
+});

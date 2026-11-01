@@ -4,7 +4,7 @@ import { LocalPdfResources, PdfDecoderFallbacks } from './pdf-resources.js';
 import { MAX_PDF_PAGES } from './pdf-limits.js';
 import { PdfWork } from './pdf-work.js';
 import { reconcilePdfOcr } from './pdf-ocr-consensus.js';
-import { pdfScanMarks, pdfUnderlineBlock } from './pdf-scan-marks.js';
+import { pdfScanMarks, pdfUnderlineBlock, pdfScanRuleFragment } from './pdf-scan-marks.js';
 import { pdfBlankScan, pdfWholePageImage, removePdfScanBorderFragments, pdfScanPageFallback } from './pdf-page-image.js';
 import { base64ToBytes } from './binary.js';
 import { analyzePdfPage, createPdfLayout, groupPdfDrawings, PDF_WIDTH, PDF_SCREEN } from './pdf-layout.js';
@@ -460,14 +460,24 @@ export class PdfDocument {
       width: canvas.width, height: canvas.height, data: pixels.data,
       originalData: analysis.blocks.some(block => block.kind === 'scan' && !block.fullPage && !block.text.trim())
         ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : undefined });
+    if (reflow && needsOcr) analysis.blocks = analysis.blocks.filter(block => !pdfScanRuleFragment(block,
+      { width: canvas.width, height: canvas.height, data: pixels.data, text }));
     this.checkpoint('reflowing-text');
     await this.yieldPreparation();
     if (reflow) for (const block of analysis.blocks) {
-      block.reflow = reflowPdfBlock(block, {
+      // Pencil strokes can make dense scanned prose look like one figure.
+      // Require multiple substantial rows and the usual pixel coverage/table
+      // checks; explicit exhibits, sparse labels and actual diagrams stay put.
+      const scanProse = needsOcr && block.kind === 'figure' && !block.fullPage && !block.captionId
+        && !block.figureBounds?.some(box => box.kind === 'table')
+        && block.lines.filter(line => line.text.length >= 35 && line.confidence >= 80
+          && line.height < 45 && line.width >= block.width * .6).length >= 6;
+      block.reflow = reflowPdfBlock(scanProse ? { ...block, kind: 'text' } : block, {
         // The preview and native glasses share row/source coordinates. Wrap
         // to fit both fonts; leave the same firmware allowance as Markdown.
         fontSize: textSize, measure, pixels: pixels.data, pageWidth: canvas.width, allowSparseUncertainty: needsOcr,
       });
+      if (scanProse && block.reflow) { block.kind = 'text'; delete block.figureBounds; }
       if (block.reflow) block.reflow.nativeWrap = 1;
     }
     if (reflow && needsOcr) analysis = pdfScanPageFallback(analysis, { width: canvas.width, height: canvas.height, images });

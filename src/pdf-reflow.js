@@ -93,7 +93,7 @@ export function joinPdfTextTails(blocks) {
   return joined;
 }
 
-function mostlyTextInk(block, pixels, pageWidth) {
+function mostlyTextInk(block, pixels, pageWidth, scan = false) {
   // In scans OCR can identify a few labels inside a much larger figure. Only
   // replace a block when recognized words account for almost all of its ink.
   if (!pixels) return true;
@@ -136,6 +136,9 @@ function mostlyTextInk(block, pixels, pageWidth) {
   let ink = 0; let explained = 0;
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     if (rules.has(y)) continue;
+    // A scan crop may span a centered label and disconnected binding shadow.
+    // Ignore only the outer paper edge, never unexplained interior artwork.
+    if (scan && (x + x0 < 20 || x + x0 >= pageWidth - 20)) continue;
     const i = ((y + y0) * pageWidth + x + x0) * 4;
     if (pixels[i] * .2126 + pixels[i + 1] * .7152 + pixels[i + 2] * .0722 < 200) {
       ink++; explained += covered[y * width + x];
@@ -178,7 +181,7 @@ export function reflowPdfBlock(block, { fontSize = 20, measure, pixels, pageWidt
   const tableRows = Math.max(2, rows.length * .4);
   if (!block.contents && gaps.flat().some(([left, right]) => gaps.filter(row => row.some(([a, b]) =>
     Math.min(right, b) - Math.max(left, a) > height * 1.5)).length >= tableRows)) return null;
-  if (!block.contents && !block.digitizationCredit && !mostlyTextInk(block, pixels, pageWidth)) return null;
+  if (!block.contents && !block.digitizationCredit && !mostlyTextInk(block, pixels, pageWidth, allowSparseUncertainty)) return null;
   const paragraphs = []; let paragraph;
   for (const [i, row] of rows.entries()) {
     const last = rows[i - 1];

@@ -159,3 +159,21 @@ test('word-by-word scan text still establishes a body for an isolated nearby bot
   assert.equal(insidePdfMargin(folio, pdfPageNumberMasks(page)), true);
   assert.equal(pdfPageNumberMasks({ ...page, text: [...body, folio, line('a note on the same line', 749, 320, 220)] }).length, 0);
 });
+
+test('repeated sideways publisher watermarks survive OCR variations; marginal notes stay', () => {
+  const label = 'Downloaded from example journals at University on 1 November 2026';
+  const documents = Array.from({ length: 8 }, (_, i) => ({ width: 600, height: 800, text: [
+    line('A substantial body paragraph remains readable in the book.', 200),
+    { x: 583+i%3, y: 250, width: 8, height: 300, text: label.replace('University', i%2 ? 'Unlversity' : 'University') },
+    { x: 20, y: 300, width: 10, height: 80, text: `My unique handwritten note ${i}` },
+  ] }));
+  const masks = repeatedPdfTextMasks(documents);
+  for (let i = 0; i < documents.length; i++) {
+    assert.equal(insidePdfMargin(documents[i].text[1], masks[i]), true);
+    assert.equal(insidePdfMargin(documents[i].text[0], masks[i]), false);
+    assert.equal(insidePdfMargin(documents[i].text[2], masks[i]), false);
+  }
+  assert.deepEqual(repeatedPdfTextMasks(documents.slice(0, 1)), [[]]);
+  documents[0].text.push({ x: 580, y: 580, width: 15, height: 20, text: 'Real label' });
+  assert.equal(insidePdfMargin(documents[0].text.at(-1), repeatedPdfTextMasks(documents)[0]), false);
+});
